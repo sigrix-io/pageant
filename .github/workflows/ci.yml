@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Without the record extra, as a project that only packs its lessons installs it:
+  # tests/test_core_imports.py holds that nothing here needs more than Python.
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        # The start hooks start processes and serve files, and a lesson's stand-in commands
+        # are launchers written for the system they run on, so the tests run on the other
+        # two systems a person records on, once each.
+        include:
+          - os: macos-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.13"
+    steps:
+      # Checks out, installs the Python and pip-installs `-e .[dev]`, with the
+      # upstream actions pinned once in sigrix-io/actions rather than here.
+      - uses: sigrix-io/actions/setup-python-project@765103f1c9d89e019dcaea72a78eed2577b30ae1 # v1.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Test
+        run: pytest -q
+      - name: The console script answers
+        run: pageant --version
+
+  # py.typed ships in the wheel, which tells every consumer's type checker to trust these
+  # annotations. Strict, as pyproject.toml configures it, with the record extra installed
+  # so the studio, the voice and the mix are checked against what they import.
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,record]"
+      - run: python -m mypy
+      # The example is a project of its own, whose lesson imports the pages beside it.
+      - name: The example lesson, as a copy of it is checked
+        run: python -m mypy --no-namespace-packages src/pageant/example/pages.py src/pageant/example/lesson.py
+
+  # The example lesson, recorded end to end from the wheel installed with its record extra
+  # in a fresh environment, as a person installs it: Playwright's own Chromium, the voice
+  # fetched from its release and checked, and ffmpeg. Run from outside the checkout, so
+  # nothing in it can stand in for what the wheel carries.
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg
+      - name: Build the wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Install it with the record extra in a fresh environment
+        run: |
+          python -m venv "$RUNNER_TEMP/fresh"
+          "$RUNNER_TEMP/fresh/bin/python" -m pip install "$(ls dist/pageant-*.whl)[record]"
+          "$RUNNER_TEMP/fresh/bin/python" -m playwright install --with-deps chromium
+      # The voice model, about 120 MB, is fetched once and checked against the SHA-256 in
+      # narrate.py, so the cache is keyed by that file.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pageant/kokoro
+          key: kokoro-${{ hashFiles('src/pageant/narrate.py') }}
+      - name: Record the example lesson
+        working-directory: ${{ runner.temp }}
+        run: |
+          fresh/bin/pageant example notebook
+          fresh/bin/pageant record notebook/lesson.py
+      - name: What it wrote is a bundle, a pack and an upload
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          bundle=notebook/out/first-note
+          for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json; do
+            test -s "$bundle/$name" || { echo "::error::$bundle/$name is missing or empty"; exit 1; }
+          done
+          picture=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 "$bundle/video.mp4")
+          sound=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 "$bundle/video.mp4")
+          echo "picture: $picture, sound: $sound"
+          test "$picture" = "h264,1920,1080,30/1"
+          test "$sound" = "aac,48000"
+          cat "$bundle/chapters.txt"
+          # Refuses chapters YouTube would not show: fewer than three, or one under ten seconds.
+          fresh/bin/pageant youtube-text notebook/pages.py
+          fresh/bin/pageant pack notebook/pages.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: example-lesson
+          path: ${{ runner.temp }}/notebook/out/first-note/
+          if-no-files-found: error
+
+  # The aggregate gate. One check to require on main, so adding a job or an
+  # operating system above does not mean editing the branch ruleset to match.
+  ci-passed:
+    if: always()
+    needs: [test, types, record]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "false" ]

@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  Notebook: the page Pageant's example lesson films (lesson.py, beside site/). It keeps a CSP of
+  its own, as a product's page does, and the overlay the studio draws over it needs nothing this
+  policy refuses.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+  <title>Notebook</title>
+  <link rel="icon" href="mark.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <img class="mark" src="mark.svg" alt="" width="36" height="36">
+      <h1>Notebook</h1>
+      <span class="count" id="count">2 notes</span>
+    </header>
+    <form id="new-note" class="new" autocomplete="off">
+      <label class="visually-hidden" for="note">A new note</label>
+      <input id="note" name="note" placeholder="Write a note" maxlength="120" required>
+      <button type="submit">Add note</button>
+    </form>
+    <ol id="notes" class="notes" aria-label="Your notes">
+      <li><span class="text">Water the plants</span><time>Today</time></li>
+      <li><span class="text">Call the dentist about Tuesday</span><time>Yesterday</time></li>
+    </ol>
+    <p class="foot">Notes stay on this page: nothing is sent anywhere.</p>
+  </main>
+</body>
+</html>

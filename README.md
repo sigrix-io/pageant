@@ -1,1 +1,242 @@
-# pageant
+# Pageant
+
+Record a product's video lessons from the app itself, as code.
+
+A lesson is a Python file: a table of everything it says, and its steps, each a highlight, a click,
+a line typed or a command run. `pageant record` starts the product, drives its real page in
+Chromium with a cursor, a spotlight and captions drawn over it, speaks every line with a voice
+that runs on your computer over music made there, and writes a folder of the lesson's own:
+
+| File | What it is |
+| --- | --- |
+| `video.mp4` | the video: 1080p, 30 fps, H.264 and AAC, with its chapters as markers desktop players show |
+| `cover.jpg` | its poster, which is the title card |
+| `captions.vtt` | its captions: every line spoken, including those over a card |
+| `chapters.vtt` | its chapters, for a web page's video player |
+| `chapters.txt` | its chapters as lines for a YouTube description, which YouTube turns into chapters |
+| `lesson.json` | its page on a learning site |
+
+Because a lesson is code, it is recorded again in a few minutes when the product changes, and a
+step the product no longer has (a button that moved, a label that changed) stops the recording
+with an error, and a screenshot of the page, rather than letting a stale video out.
+
+Pageant came out of [Bailey](https://github.com/sigrix-io/bailey)'s `lessons/`, which recorded
+Bailey's four video lessons on [sigrix.io](https://sigrix.io/learn/tag/bailey) with this engine.
+
+## Try it
+
+You need Python 3.11 or later and ffmpeg on the `PATH`.
+
+```bash
+pip install "pageant[record]"
+```
+
+```bash
+playwright install chromium
+```
+
+```bash
+pageant example notebook
+```
+
+```bash
+pageant record notebook/lesson.py
+```
+
+`pageant example` writes the example lesson into `notebook/`: Notebook, a one-page app the package
+ships, filmed in three chapters. Recording it takes a minute or two and writes
+`notebook/out/first-note/`. The first recording fetches the voice,
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) (Apache-2.0, about 120 MB), from that
+project's release on GitHub, checks it against the SHA-256 in `narrate.py`, and keeps it in
+`~/.cache/pageant/` with every line it speaks, so a lesson recorded again speaks nothing it has
+spoken before.
+
+`import pageant` needs only the standard library: a project that packs its lessons or writes
+their YouTube text installs `pageant` alone, and only recording takes the `record` extra
+(Playwright, Kokoro and numpy).
+
+## A lesson
+
+```python
+from pathlib import Path
+
+import pages
+
+from pageant.apps import StaticSite
+from pageant.studio import Lesson, Mark, Studio
+
+SITE = Path(__file__).resolve().parent / "site"
+
+NARRATION = {
+    "title": {"text": "Notebook, lesson one: your first note."},
+    "page": {"text": "This is Notebook: a box to write a note in, and the notes you have kept."},
+    "add": {"text": "Then add it."},
+}
+
+
+async def run(s: Studio) -> None:
+    await s.voice("title", 300)  # spoken over the title card
+    await s.card(None, 700)  # lift it
+    await s.chapter("The page")  # a label on screen, and a chapter of the video
+    await s.say("page")  # a caption, held as long as its voice
+    await s.spot(s.page.locator("#notes"))  # dim everything else
+    await s.click(s.page.get_by_role("button", name="Add note"))
+
+
+LESSON = Lesson(
+    page=pages.FIRST_NOTE,
+    title={"kicker": "Notebook · lesson 1", "title": "Your first note", "sub": "Pageant's example lesson"},
+    narration=NARRATION,
+    run=run,
+    app=StaticSite(SITE, ready="#notes"),
+    mark=Mark("/mark.svg", SITE / "mark.svg"),
+)
+```
+
+`pageant record` loads the file as running it would, with its own folder first on the import
+path, so a lesson imports the pages beside it, and records the lesson it names as `LESSON`.
+
+A `Lesson` holds:
+
+| Field | What it is |
+| --- | --- |
+| `page` | its page (below), which names the folder it records into |
+| `title` | the title card, which is also the poster: `kicker`, `title` and `sub` |
+| `narration` | every line, by key: `text` is the caption, and `spoken` what the voice says instead, if anything |
+| `run` | its steps |
+| `app` | the product it films, and how to start it (below) |
+| `voice` | Kokoro's voice, `af_heart` unless it says |
+| `color_scheme` | `light` or `dark`, as the browser asks the page for |
+| `setup` | steps on the page before the recording starts, so a lesson starts where the one before left off |
+| `commands` | stand-in programs put first on the app's `PATH` and the terminal's, each a name and the script this Python runs |
+| `mark` | the product's mark on the title cards: the address its app serves it at, and the file |
+
+A lesson's steps call the studio, `s`:
+
+| Step | What it does |
+| --- | --- |
+| `s.card(spec, ms)`, `s.card(None)` | a title card over the page, with the product's mark; `None` lifts it |
+| `s.chapter(title)` | the label on screen, and a chapter of the video from here on |
+| `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
+| `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
+| `s.quiet()` | takes the caption down |
+| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, scrolled into view |
+| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, and clicks, with a sound |
+| `s.type(locator, text)` | types as a person does |
+| `s.terminal(title, where)` | leaves the page for a terminal |
+| `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
+| `s.sleep(ms)` | waits |
+| `s.page` | the Playwright page itself, for anything else |
+
+The video's chapters follow YouTube's rules, since a video that breaks them shows none: the first
+starts at 0:00 whenever the lesson marked it, and a chapter shorter than ten seconds runs on into
+the one before it.
+
+## Starting the product: the start hook
+
+The studio holds no product's name. A lesson names its app, and the studio asks it to start, in a
+work folder of the recording's own, before the browser opens:
+
+```python
+class App(Protocol):
+    def start(self, work: Path, env: Mapping[str, str]) -> Running: ...
+```
+
+`Running` says the address the browser opens, the environment a command typed in the filmed
+terminal runs with, a CSS selector the page shows once it is ready to be filmed, and how to stop
+the app and everything it started. Two apps ship:
+
+- `Command(argv, address=...)` starts a process in the work folder and reads its address from a
+  line it prints, as a development server or a command-line app that opens in the browser does.
+  `env` adds variables, `files` writes files into the work folder first (such as the answers a
+  scripted service reads), and `exports` reads more values from what it prints into the
+  terminal's environment, such as the address of a stand-in service it started.
+- `StaticSite(folder)` serves a folder of files on this computer's own address, as the example does.
+
+Anything with a `start` method of that shape is an app, so a product whose start takes more (a
+data folder made first, a scripted model beside it) writes a hook of its own.
+
+## Publishing
+
+### Pages, and a pack a learning site imports
+
+A product's pages are written once, in a file of their own that needs only the standard library,
+for every place a lesson is published:
+
+```python
+from pageant.bundle import LearningPath, Page
+from pageant.youtube import Product
+
+FIRST_NOTE = Page(folder="first-note", slug="notebook-lesson-1-your-first-note", title="...", summary="...", body="...")
+PATH = LearningPath(
+    title="Notebook: getting started", audience="New to Notebook", description="...", lessons=(FIRST_NOTE,)
+)
+PRODUCT = Product(name="Notebook", about="...", link="...", all_lessons="...", scripted="")
+```
+
+`pageant record` writes a lesson's page beside its video as `lesson.json`, and
+
+```bash
+pageant pack notebook/pages.py
+```
+
+zips each recorded lesson of `PATH`, its page written afresh, with the path that lists them, as
+`out/lessons.zip`. The format is Sigrix's, `sigrix-lesson/1` and `sigrix-learning-path/1`:
+[Sigrix](https://sigrix.io)'s Learn console imports the pack in one step, checking every lesson
+and showing what the import will do before it saves anything, and publishes each page at
+`<site>/learn/<slug>`. A lesson not recorded whole stops the pack, naming what is missing.
+
+### YouTube
+
+```bash
+pageant youtube-text notebook/pages.py --link notebook-lesson-1-your-first-note=https://example.com/go/abc
+```
+
+writes `youtube.txt` into each recorded lesson's folder: its title, description and tags, to paste
+into YouTube Studio beside the folder's `video.mp4`, `cover.jpg` (the thumbnail) and
+`captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
+`--link` gives), its chapters, what in it is scripted, where it sits in its path, and the
+product's `PRODUCT` lines. YouTube refuses a title over 100 characters, `<` or `>`, a description
+over 5,000 bytes and tags over 500 characters, and shows no chapters that break its rules, so each
+is checked first, and a lesson that breaks one stops the command before anything is written.
+
+## What is real, and what is scripted
+
+A lesson films the real product, and says what in it is not real wherever it is published. The
+page, the clicks and what the product shows are its own. Whatever is scripted or a stand-in (a
+model's answers, a service the product calls, a command on the `PATH`) is said on the lesson's
+page and, through `Product.scripted`, in every YouTube description. The example has nothing
+scripted: its page is the one it films, and its command really runs.
+
+## The command line
+
+| Command | What it does |
+| --- | --- |
+| `pageant record LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | records the lesson the file names as `LESSON` into `out/` beside it; `--chromium` (or `PAGEANT_CHROMIUM`) drives a Chromium already installed, and `--keep-work` keeps the frames, the audio and the app's work folder |
+| `pageant pack PAGES.py [--out DIR] [--zip FILE]` | zips the recorded lessons of `PATH`, as `out/lessons.zip` unless `--zip` names another |
+| `pageant youtube-text PAGES.py [--out DIR] [--link SLUG=URL ...]` | writes each recorded lesson's `youtube.txt` from `PATH` and `PRODUCT` |
+| `pageant example FOLDER` | writes the example lesson into a new folder, to record and change |
+
+To hear how the voice says a line, and see the phonemes it reads, before a lesson says it:
+
+```bash
+python -m pageant.narrate "Install one from a zip file."
+```
+
+## Developing
+
+```bash
+pip install -e ".[dev,record]"
+```
+
+```bash
+ruff check . && ruff format --check . && mypy && pytest
+```
+
+The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows; CI's record
+job films the example lesson from a fresh install of the wheel, on Linux, and keeps the video as
+an artifact of the run. `tests/test_boundary.py` fails if the engine names a product it films.
+
+## License
+
+Apache-2.0: see `LICENSE` and `NOTICE`.
