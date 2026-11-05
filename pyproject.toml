@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pageant"
+dynamic = ["version"]
+description = "Record a product's video lessons from the app itself, as code: the real page in a real browser, a voice, captions, chapters, and the bundle a learning site imports."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11"
+authors = [{ name = "Sigrix" }]
+keywords = ["video", "lessons", "tutorials", "screencast", "playwright", "text-to-speech", "webvtt", "youtube"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Software Development :: Documentation",
+    "Typing :: Typed",
+]
+# None: a lesson's page, its pack, its captions and chapters and its YouTube upload are the
+# standard library's work, so a project that only packs lessons installs nothing else.
+dependencies = []
+
+[project.optional-dependencies]
+# What recording takes, beside ffmpeg on the PATH: Playwright drives Chromium, and Kokoro speaks
+# on this computer through onnxruntime. Pinned at the versions the lessons were last recorded
+# with, since a bump can change how a recording looks or sounds. numpy is named because the
+# voice, the music and the mix use it directly; Kokoro brings it too.
+record = [
+    "playwright==1.63.0",
+    "kokoro-onnx==0.6.1",
+    "numpy>=2",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy==2.4.1",
+]
+
+[project.scripts]
+pageant = "pageant.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sigrix-io/pageant"
+Issues = "https://github.com/sigrix-io/pageant/issues"
+Changelog = "https://github.com/sigrix-io/pageant/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/pageant/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pageant"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pageant", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "VERSIONING.md"]
+# The pin guard reads .github/workflows, which the sdist does not carry: it checks the
+# repository, not the package.
+exclude = ["tests/test_workflow_pins.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S603"]
+
+# py.typed ships in the wheel, which tells every consumer's type checker to trust these
+# annotations, so they are checked as strictly as the other Sigrix packages check theirs.
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["src/pageant"]
+mypy_path = "src"
+# The example is a project of its own, whose lesson imports the pages beside it, as a copy of it
+# does: CI checks it as one, with python -m mypy --no-namespace-packages on its two files.
+exclude = ["^src/pageant/example/"]
+
+# Kokoro ships no annotations; narrate.py is the one place that loads it.
+[[tool.mypy.overrides]]
+module = ["kokoro_onnx"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

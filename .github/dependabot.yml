@@ -1,0 +1,32 @@
+# Keeps the two things this repository pins from ageing quietly: the packages in
+# pyproject.toml (the record extra's among them) and the commits every workflow's
+# `uses:` names. A pin only stays correct if something bumps it. A bump that breaks
+# anything arrives as a red check on a pull request nobody has merged, and the
+# record job films the example lesson with the bumped Playwright and voice, so a
+# bump that changes how a recording comes out is seen before it lands.
+#
+# Dependabot reads the `# vX.Y.Z` comment beside each SHA to know what it is
+# bumping from, so a pin written without one goes stale;
+# `tests/test_workflow_pins.py` fails if either half slips.
+#
+# One pull request per ecosystem, not one per dependency, so each merge puts no
+# more than one other update behind main.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
