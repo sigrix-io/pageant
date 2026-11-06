@@ -112,7 +112,7 @@
         "path": "/body_markdown",
         "value": "b"
       },
-      "times": 50000
+      "times": 16384
     },
     {
       "name": "eight tags, each as long as one may be",
@@ -606,7 +606,7 @@
         "path": "/body_markdown",
         "value": "b"
       },
-      "times": 50001,
+      "times": 16385,
       "reason": {
         "at": "/body_markdown",
         "keyword": "maxLength"

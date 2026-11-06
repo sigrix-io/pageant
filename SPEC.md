@@ -41,7 +41,7 @@ A JSON object, in UTF-8.
 | `summary` | yes | A sentence or two under the title, and the page's description for search: not blank, at most 600 characters. |
 | `category` | yes | The section of the site the page is filed under: one of `foundations`, `tutorials`, `patterns`, `seller`, `buyer` and `case`. |
 | `tags` | no | The tags the site lists the page under, at `/learn/tag/<tag>`: a list of at most 8, each once, each lowercase letters and digits in words joined by single hyphens, at most 32 characters. |
-| `body_markdown` | no | The page's text under its video, in Markdown, at most 50,000 characters. |
+| `body_markdown` | no | The page's text under its video, in Markdown, at most 16,384 characters: half the 32,768 UTF-16 code units Sigrix keeps of a page's text, so that a text this long fits whatever its characters are (an emoji is two code units). |
 | `read_minutes` | no | How long the page takes, in whole minutes from 1 to 180, written as a whole number (`5`, not `5.0`). Without it, the site takes the video's length to the nearest minute. |
 | `youtube_url` | no | The same video on YouTube, which the page links to and never embeds: `https://www.youtube.com/watch?v=<id>` or `https://youtu.be/<id>`. Left out until the video is there, so an import keeps a link the page already has. |
 

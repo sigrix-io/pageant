@@ -46,8 +46,8 @@
     },
     "body_markdown": {
       "type": "string",
-      "maxLength": 50000,
-      "description": "The page's text under its video, in Markdown."
+      "maxLength": 16384,
+      "description": "The page's text under its video, in Markdown: at most 16,384 characters, half the 32,768 UTF-16 code units a learning site keeps of it, so that it fits whatever its characters are (an emoji is two code units)."
     },
     "read_minutes": {
       "type": "integer",
