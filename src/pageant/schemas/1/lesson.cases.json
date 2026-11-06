@@ -1,0 +1,746 @@
+{
+  "$comment": [
+    "sigrix-lesson/1's case table: lesson.json documents a reader takes, and documents it refuses, each made",
+    "by one RFC 6902 change to one it takes, so that each is refused for that change and nothing else. A",
+    "refused case's reason is where its rule is, as a JSON Pointer to the member the rule is about (for a",
+    "member a document must have, the one it lacks; for an item of a list, the item), and the schema keyword",
+    "that refuses it. Every implementation runs the table: a writer holds what it writes to the schema beside",
+    "it, and a reader with a checker of its own holds that checker to the table too, so that the two cannot",
+    "disagree about what the format allows. A change's value is repeated as many times as the case's \"times\"",
+    "says, for a text too long to write out. Every lesson in it is made up."
+  ],
+  "schema": "https://sigrix.io/schemas/pageant/1/lesson.schema.json",
+  "valid": [
+    {
+      "name": "the least a lesson may say",
+      "document": {
+        "format": "sigrix-lesson/1",
+        "slug": "notebook-lesson-1-your-first-note",
+        "title": "Notebook lesson 1: your first note",
+        "summary": "Write a note and add it, and see where it goes.",
+        "category": "tutorials"
+      }
+    },
+    {
+      "name": "a lesson with every member",
+      "document": {
+        "format": "sigrix-lesson/1",
+        "slug": "notebook-lesson-2-find-a-note",
+        "title": "Notebook lesson 2: find a note",
+        "summary": "Search the notes you have written, and open the one you want.",
+        "category": "patterns",
+        "tags": [
+          "notebook",
+          "video"
+        ],
+        "body_markdown": "## What you will see\n\n- A search, and the note it finds.\n",
+        "read_minutes": 3,
+        "youtube_url": "https://www.youtube.com/watch?v=Nt3bk-L1s0n"
+      }
+    },
+    {
+      "name": "a lesson linked to YouTube by its short link",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "https://youtu.be/Nt3bk-L1s0n"
+      }
+    },
+    {
+      "name": "a lesson with no tags",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags",
+        "value": []
+      }
+    },
+    {
+      "name": "a lesson with an empty body",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/body_markdown",
+        "value": ""
+      }
+    },
+    {
+      "name": "a lesson with a member this reader does not know",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "add",
+        "path": "/recorded_with",
+        "value": "a recorder of its own"
+      }
+    },
+    {
+      "name": "a slug as long as one may be",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "a"
+      },
+      "times": 120
+    },
+    {
+      "name": "a title as long as one may be",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "t"
+      },
+      "times": 200
+    },
+    {
+      "name": "a summary as long as one may be",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/summary",
+        "value": "s"
+      },
+      "times": 600
+    },
+    {
+      "name": "a body as long as one may be",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/body_markdown",
+        "value": "b"
+      },
+      "times": 50000
+    },
+    {
+      "name": "eight tags, each as long as one may be",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags",
+        "value": [
+          "notebook-tag-one-xxxxxxxxxxxxxxx",
+          "notebook-tag-two-xxxxxxxxxxxxxxx",
+          "notebook-tag-three-xxxxxxxxxxxxx",
+          "notebook-tag-four-xxxxxxxxxxxxxx",
+          "notebook-tag-five-xxxxxxxxxxxxxx",
+          "notebook-tag-six-xxxxxxxxxxxxxxx",
+          "notebook-tag-seven-xxxxxxxxxxxxx",
+          "notebook-tag-eight-xxxxxxxxxxxxx"
+        ]
+      }
+    },
+    {
+      "name": "the shortest read time",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": 1
+      }
+    },
+    {
+      "name": "the longest read time",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": 180
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "a page that is a list",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "",
+        "value": []
+      },
+      "reason": {
+        "at": "",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "no format",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "remove",
+        "path": "/format"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a format this reader does not know",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/format",
+        "value": "sigrix-lesson/2"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "const"
+      }
+    },
+    {
+      "name": "a learning path's format",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/format",
+        "value": "sigrix-learning-path/1"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "const"
+      }
+    },
+    {
+      "name": "no slug",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "remove",
+        "path": "/slug"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a slug that is a number",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": 1
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a slug with capitals and spaces",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "Notebook Lesson 1"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug with an underscore",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "notebook_lesson_1"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug that starts with a hyphen",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "-notebook-lesson-1"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug with two hyphens in a row",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "notebook--lesson-1"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug that ends in a line break",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "notebook-lesson-1-your-first-note\n"
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug with a space after it",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "notebook-lesson-1-your-first-note "
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "an empty slug",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": ""
+      },
+      "reason": {
+        "at": "/slug",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a slug one character too long",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/slug",
+        "value": "a"
+      },
+      "times": 121,
+      "reason": {
+        "at": "/slug",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "no title",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "remove",
+        "path": "/title"
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a title that is null",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": null
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a blank title",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "   "
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a title one character too long",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "t"
+      },
+      "times": 201,
+      "reason": {
+        "at": "/title",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "no summary",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "remove",
+        "path": "/summary"
+      },
+      "reason": {
+        "at": "/summary",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a summary that is a list of sentences",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/summary",
+        "value": [
+          "Write a note.",
+          "Add it."
+        ]
+      },
+      "reason": {
+        "at": "/summary",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "an empty summary",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/summary",
+        "value": ""
+      },
+      "reason": {
+        "at": "/summary",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a summary one character too long",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/summary",
+        "value": "s"
+      },
+      "times": 601,
+      "reason": {
+        "at": "/summary",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "no category",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "remove",
+        "path": "/category"
+      },
+      "reason": {
+        "at": "/category",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a category written with a capital",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/category",
+        "value": "Tutorials"
+      },
+      "reason": {
+        "at": "/category",
+        "keyword": "enum"
+      }
+    },
+    {
+      "name": "a category the site does not have",
+      "base": "the least a lesson may say",
+      "change": {
+        "op": "replace",
+        "path": "/category",
+        "value": "videos"
+      },
+      "reason": {
+        "at": "/category",
+        "keyword": "enum"
+      }
+    },
+    {
+      "name": "tags written as one text",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags",
+        "value": "notebook, video"
+      },
+      "reason": {
+        "at": "/tags",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a tag that is a number",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags/1",
+        "value": 7
+      },
+      "reason": {
+        "at": "/tags/1",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a tag with a capital",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags/0",
+        "value": "Notebook"
+      },
+      "reason": {
+        "at": "/tags/0",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a tag with a space",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags/0",
+        "value": "note book"
+      },
+      "reason": {
+        "at": "/tags/0",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a tag one character too long",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags/0",
+        "value": "a"
+      },
+      "times": 33,
+      "reason": {
+        "at": "/tags/0",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "nine tags",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags",
+        "value": [
+          "notebook-tag-one-xxxxxxxxxxxxxxx",
+          "notebook-tag-two-xxxxxxxxxxxxxxx",
+          "notebook-tag-three-xxxxxxxxxxxxx",
+          "notebook-tag-four-xxxxxxxxxxxxxx",
+          "notebook-tag-five-xxxxxxxxxxxxxx",
+          "notebook-tag-six-xxxxxxxxxxxxxxx",
+          "notebook-tag-seven-xxxxxxxxxxxxx",
+          "notebook-tag-eight-xxxxxxxxxxxxx",
+          "notebook-tag-nine-xxxxxxxxxxxxxx"
+        ]
+      },
+      "reason": {
+        "at": "/tags",
+        "keyword": "maxItems"
+      }
+    },
+    {
+      "name": "a tag twice",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/tags",
+        "value": [
+          "video",
+          "video"
+        ]
+      },
+      "reason": {
+        "at": "/tags",
+        "keyword": "uniqueItems"
+      }
+    },
+    {
+      "name": "a body that is a list of lines",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/body_markdown",
+        "value": [
+          "## What you will see"
+        ]
+      },
+      "reason": {
+        "at": "/body_markdown",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a body one character too long",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/body_markdown",
+        "value": "b"
+      },
+      "times": 50001,
+      "reason": {
+        "at": "/body_markdown",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "a read time written as text",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": "3"
+      },
+      "reason": {
+        "at": "/read_minutes",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a read time with a fraction",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": 2.5
+      },
+      "reason": {
+        "at": "/read_minutes",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a read time of no minutes",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": 0
+      },
+      "reason": {
+        "at": "/read_minutes",
+        "keyword": "minimum"
+      }
+    },
+    {
+      "name": "a read time past three hours",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/read_minutes",
+        "value": 181
+      },
+      "reason": {
+        "at": "/read_minutes",
+        "keyword": "maximum"
+      }
+    },
+    {
+      "name": "a YouTube link that is null",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": null
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a link to another video site",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "https://videos.example.com/123456789"
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a watch address with a start time",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "https://www.youtube.com/watch?v=Nt3bk-L1s0n&t=30s"
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a watch address over plain http",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "http://www.youtube.com/watch?v=Nt3bk-L1s0n"
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a video id one character short",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "https://youtu.be/Nt3bk-L1s0"
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a link to a channel, not a video",
+      "base": "a lesson with every member",
+      "change": {
+        "op": "replace",
+        "path": "/youtube_url",
+        "value": "https://www.youtube.com/@notebook"
+      },
+      "reason": {
+        "at": "/youtube_url",
+        "keyword": "pattern"
+      }
+    }
+  ]
+}

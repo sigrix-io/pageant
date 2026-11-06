@@ -43,6 +43,8 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
     "mypy==2.4.1",
+    # The reference the schemas and their case tables are held to, beside Pageant's own checker.
+    "jsonschema>=4.18",
 ]
 
 [project.scripts]
@@ -60,7 +62,7 @@ path = "src/pageant/__init__.py"
 packages = ["src/pageant"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/pageant", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "VERSIONING.md"]
+include = ["src/pageant", "tests", "README.md", "SPEC.md", "LICENSE", "NOTICE", "CHANGELOG.md", "VERSIONING.md"]
 # The pin guard reads .github/workflows, which the sdist does not carry: it checks the
 # repository, not the package.
 exclude = ["tests/test_workflow_pins.py"]

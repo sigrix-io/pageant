@@ -1,0 +1,412 @@
+{
+  "$comment": [
+    "sigrix-learning-path/1's case table: path.json documents a reader takes, and documents it refuses, each",
+    "made by one RFC 6902 change to one it takes, so that each is refused for that change and nothing else. A",
+    "refused case's reason is where its rule is, as a JSON Pointer to the member the rule is about (for a",
+    "member a document must have, the one it lacks; for an item of a list, the item), and the schema keyword",
+    "that refuses it. Every implementation runs the table: a writer holds what it writes to the schema beside",
+    "it, and a reader with a checker of its own holds that checker to the table too, so that the two cannot",
+    "disagree about what the format allows. A change's value is repeated as many times as the case's \"times\"",
+    "says, for a text too long to write out. Every lesson in it is made up."
+  ],
+  "schema": "https://sigrix.io/schemas/pageant/1/path.schema.json",
+  "valid": [
+    {
+      "name": "the least a path may say",
+      "document": {
+        "format": "sigrix-learning-path/1",
+        "title": "Notebook: getting started",
+        "lessons": [
+          "notebook-lesson-1-your-first-note"
+        ]
+      }
+    },
+    {
+      "name": "a path with every member",
+      "document": {
+        "format": "sigrix-learning-path/1",
+        "title": "Notebook: getting started",
+        "audience": "New to Notebook",
+        "description": "Two short lessons, filmed from the app itself.",
+        "lessons": [
+          "notebook-lesson-1-your-first-note",
+          "notebook-lesson-2-find-a-note"
+        ]
+      }
+    },
+    {
+      "name": "a path with an empty audience",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/audience",
+        "value": ""
+      }
+    },
+    {
+      "name": "a path with a member this reader does not know",
+      "base": "the least a path may say",
+      "change": {
+        "op": "add",
+        "path": "/recorded_with",
+        "value": "a recorder of its own"
+      }
+    },
+    {
+      "name": "twelve lessons",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons",
+        "value": [
+          "notebook-lesson-1",
+          "notebook-lesson-2",
+          "notebook-lesson-3",
+          "notebook-lesson-4",
+          "notebook-lesson-5",
+          "notebook-lesson-6",
+          "notebook-lesson-7",
+          "notebook-lesson-8",
+          "notebook-lesson-9",
+          "notebook-lesson-10",
+          "notebook-lesson-11",
+          "notebook-lesson-12"
+        ]
+      }
+    },
+    {
+      "name": "a title as long as one may be",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "t"
+      },
+      "times": 120
+    },
+    {
+      "name": "an audience as long as one may be",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/audience",
+        "value": "a"
+      },
+      "times": 60
+    },
+    {
+      "name": "a description as long as one may be",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/description",
+        "value": "d"
+      },
+      "times": 280
+    },
+    {
+      "name": "a lesson's slug as long as one may be",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/0",
+        "value": "a"
+      },
+      "times": 120
+    }
+  ],
+  "invalid": [
+    {
+      "name": "a path that is a list",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "",
+        "value": [
+          "notebook-lesson-1-your-first-note"
+        ]
+      },
+      "reason": {
+        "at": "",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "no format",
+      "base": "the least a path may say",
+      "change": {
+        "op": "remove",
+        "path": "/format"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a format this reader does not know",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/format",
+        "value": "sigrix-learning-path/2"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "const"
+      }
+    },
+    {
+      "name": "a lesson's format",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/format",
+        "value": "sigrix-lesson/1"
+      },
+      "reason": {
+        "at": "/format",
+        "keyword": "const"
+      }
+    },
+    {
+      "name": "no title",
+      "base": "the least a path may say",
+      "change": {
+        "op": "remove",
+        "path": "/title"
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "a title that is null",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": null
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a blank title",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "  "
+      },
+      "reason": {
+        "at": "/title",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a title one character too long",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/title",
+        "value": "t"
+      },
+      "times": 121,
+      "reason": {
+        "at": "/title",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "an audience that is a list",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/audience",
+        "value": [
+          "New to Notebook"
+        ]
+      },
+      "reason": {
+        "at": "/audience",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "an audience one character too long",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/audience",
+        "value": "a"
+      },
+      "times": 61,
+      "reason": {
+        "at": "/audience",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "a description that is a number",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/description",
+        "value": 2
+      },
+      "reason": {
+        "at": "/description",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a description one character too long",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/description",
+        "value": "d"
+      },
+      "times": 281,
+      "reason": {
+        "at": "/description",
+        "keyword": "maxLength"
+      }
+    },
+    {
+      "name": "no lessons",
+      "base": "the least a path may say",
+      "change": {
+        "op": "remove",
+        "path": "/lessons"
+      },
+      "reason": {
+        "at": "/lessons",
+        "keyword": "required"
+      }
+    },
+    {
+      "name": "one lesson written as text",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons",
+        "value": "notebook-lesson-1-your-first-note"
+      },
+      "reason": {
+        "at": "/lessons",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "an empty list of lessons",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons",
+        "value": []
+      },
+      "reason": {
+        "at": "/lessons",
+        "keyword": "minItems"
+      }
+    },
+    {
+      "name": "thirteen lessons",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons",
+        "value": [
+          "notebook-lesson-1",
+          "notebook-lesson-2",
+          "notebook-lesson-3",
+          "notebook-lesson-4",
+          "notebook-lesson-5",
+          "notebook-lesson-6",
+          "notebook-lesson-7",
+          "notebook-lesson-8",
+          "notebook-lesson-9",
+          "notebook-lesson-10",
+          "notebook-lesson-11",
+          "notebook-lesson-12",
+          "notebook-lesson-13"
+        ]
+      },
+      "reason": {
+        "at": "/lessons",
+        "keyword": "maxItems"
+      }
+    },
+    {
+      "name": "a lesson twice",
+      "base": "a path with every member",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/1",
+        "value": "notebook-lesson-1-your-first-note"
+      },
+      "reason": {
+        "at": "/lessons",
+        "keyword": "uniqueItems"
+      }
+    },
+    {
+      "name": "a lesson named by a number",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/0",
+        "value": 1
+      },
+      "reason": {
+        "at": "/lessons/0",
+        "keyword": "type"
+      }
+    },
+    {
+      "name": "a lesson named by its title",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/0",
+        "value": "Notebook lesson 1: your first note"
+      },
+      "reason": {
+        "at": "/lessons/0",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a lesson's slug with a space after it",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/0",
+        "value": "notebook-lesson-1-your-first-note "
+      },
+      "reason": {
+        "at": "/lessons/0",
+        "keyword": "pattern"
+      }
+    },
+    {
+      "name": "a lesson's slug one character too long",
+      "base": "the least a path may say",
+      "change": {
+        "op": "replace",
+        "path": "/lessons/0",
+        "value": "a"
+      },
+      "times": 121,
+      "reason": {
+        "at": "/lessons/0",
+        "keyword": "maxLength"
+      }
+    }
+  ]
+}

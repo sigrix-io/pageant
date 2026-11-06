@@ -86,6 +86,11 @@ def _record(args: argparse.Namespace) -> int:
     if needs:
         raise _not_here(needs)
     lesson = _named(load(args.lesson), args.lesson, "LESSON", studio.Lesson)
+    # The page is written once the lesson is filmed; one the import would refuse stops it first.
+    try:
+        bundle.page_json(lesson.page)
+    except bundle.ManifestRefused as refused:
+        raise Refused(str(refused)) from None
     made = asyncio.run(studio.record(lesson, _out(args, args.lesson), chromium=args.chromium, keep_work=args.keep_work))
     sys.stdout.write(json.dumps(made, indent=2, ensure_ascii=False) + "\n")
     return 0
@@ -96,8 +101,8 @@ def _pack(args: argparse.Namespace) -> int:
     out = _out(args, args.pages)
     try:
         made = bundle.pack(out, path, args.zip or out / PACK)
-    except FileNotFoundError as missing:
-        raise Refused(str(missing)) from None
+    except (FileNotFoundError, bundle.ManifestRefused) as refused:
+        raise Refused(str(refused)) from None
     sys.stdout.write(f"{made}\n")
     return 0
 

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigrix.io/schemas/pageant/1/path.schema.json",
+  "title": "A learning path (path.json), format sigrix-learning-path/1",
+  "description": "The learning path a pack of lesson bundles carries beside them, which lists the lessons on the learning site in the order they are taken. A reader ignores a member it does not know and refuses a format it does not know. An import adds the path, or updates the one of the same title; that each lesson it lists is in the pack or already on the site is no JSON Schema's to state, and SPEC.md says it.",
+  "$comment": "A pattern that holds a whole value ends in (?![\\s\\S]), which is the end of the text in every regular expression engine; $ is not, since in some it also matches before a final line break.",
+  "type": "object",
+  "required": ["format", "title", "lessons"],
+  "properties": {
+    "format": {
+      "const": "sigrix-learning-path/1",
+      "description": "The format and its major version. A reader refuses a format it does not know."
+    },
+    "title": {
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 120,
+      "description": "The path's title, which is not blank. An import updates the path of the same title, if there is one."
+    },
+    "audience": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "Who the path is for, in a few words."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 280,
+      "description": "What the path covers, in a sentence or two."
+    },
+    "lessons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])",
+        "maxLength": 120
+      },
+      "description": "Each lesson's slug, once, in the order the lessons are taken: at most twelve."
+    }
+  }
+}
