@@ -1,8 +1,8 @@
 """The example lesson the package ships (``src/pageant/example``), read as a person starting from it reads it.
 
 ``pageant example`` writes it out, and CI's record job records it from a fresh install of the
-wheel. These hold what can be held without recording it: its page and its path are ones Sigrix's
-import takes, its lesson file names that page, every line its narration has is said and every
+wheel. These hold what can be held without recording it: its page and its path are ones the
+format's schemas take, its lesson file names that page, every line its narration has is said and every
 line it says is in its narration, the site it films holds every file its page asks for, and its
 upload text is within what YouTube takes.
 """
@@ -15,9 +15,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from import_rules import page_refusals, path_refusals
 
-from pageant import bundle, cli, youtube
+from pageant import bundle, cli, schema, youtube
 
 
 @pytest.fixture(scope="module")
@@ -38,11 +37,12 @@ def _lesson(written: Path) -> ast.Module:
     return ast.parse((written / "lesson.py").read_text(encoding="utf-8"))
 
 
-def test_its_pages_and_its_path_are_ones_the_import_takes(pages: ModuleType) -> None:
+def test_its_pages_and_its_path_are_ones_the_formats_schemas_take(pages: ModuleType) -> None:
     assert pages.PATH.lessons, "the example has a lesson"
     for page in pages.PATH.lessons:
-        assert page_refusals(bundle.page_json(page)) == [], page.slug
-    assert path_refusals(bundle.path_json(pages.PATH)) == []
+        assert schema.problems(bundle.page_json(page), schema.load(schema.LESSON)) == [], page.slug
+    assert schema.problems(bundle.path_json(pages.PATH), schema.load(schema.PATH)) == []
+    bundle.check(pages.PATH)
     assert len({page.folder for page in pages.PATH.lessons}) == len(pages.PATH.lessons)
 
 

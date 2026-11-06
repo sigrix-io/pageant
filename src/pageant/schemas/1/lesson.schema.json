@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sigrix.io/schemas/pageant/1/lesson.schema.json",
+  "title": "A lesson's page (lesson.json), format sigrix-lesson/1",
+  "description": "The page a lesson bundle carries beside its media, which a learning site imports as the lesson's page: its address, its text, where it is filed, and the same video on YouTube. A reader ignores a member it does not know and refuses a format it does not know. Some rules are about the bundle and its pack rather than the page, and no JSON Schema can state them; SPEC.md lists them: a bundle holds its video beside its lesson.json and at most one cover, and a pack names a slug once.",
+  "$comment": "A pattern that holds a whole value ends in (?![\\s\\S]), which is the end of the text in every regular expression engine; $ is not, since in some it also matches before a final line break.",
+  "type": "object",
+  "required": ["format", "slug", "title", "summary", "category"],
+  "properties": {
+    "format": {
+      "const": "sigrix-lesson/1",
+      "description": "The format and its major version. A reader refuses a format it does not know."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])",
+      "maxLength": 120,
+      "description": "The lesson's address on the site, /learn/<slug>: lowercase letters and digits, in words joined by single hyphens, such as notebook-lesson-1-your-first-note. An import updates the lesson already at that address, if there is one."
+    },
+    "title": {
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 200,
+      "description": "The page's title, which is not blank."
+    },
+    "summary": {
+      "type": "string",
+      "pattern": "\\S",
+      "maxLength": 600,
+      "description": "A sentence or two under the title, and the page's description for search. Not blank."
+    },
+    "category": {
+      "enum": ["foundations", "tutorials", "patterns", "seller", "buyer", "case"],
+      "description": "The section of the learning site the page is filed under."
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])",
+        "maxLength": 32
+      },
+      "description": "The tags the site lists the page under, at /learn/tag/<tag>: at most eight, each once, and each lowercase letters and digits in words joined by single hyphens, at most 32 characters."
+    },
+    "body_markdown": {
+      "type": "string",
+      "maxLength": 16384,
+      "description": "The page's text under its video, in Markdown: at most 16,384 characters, half the 32,768 UTF-16 code units a learning site keeps of it, so that it fits whatever its characters are (an emoji is two code units)."
+    },
+    "read_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 180,
+      "description": "How long the page takes, in whole minutes. Without it, the site takes the video's length to the nearest minute."
+    },
+    "youtube_url": {
+      "type": "string",
+      "pattern": "^https://(?:www\\.youtube\\.com/watch\\?v=|youtu\\.be/)[A-Za-z0-9_-]{11}(?![\\s\\S])",
+      "description": "The same video on YouTube, which the page links to: its watch address, https://www.youtube.com/watch?v=<id>, or its short link, https://youtu.be/<id>. Left out until the video is there, so an import keeps a link the page already has."
+    }
+  }
+}

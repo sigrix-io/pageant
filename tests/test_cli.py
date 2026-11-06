@@ -198,6 +198,46 @@ def test_record_names_a_file_without_a_lesson(
     assert stand_in_studio == []
 
 
+def test_record_stops_on_a_page_the_import_would_refuse_before_anything_is_filmed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stand_in_studio: list[dict[str, Any]]
+) -> None:
+    pages = _project(tmp_path)
+    pages.write_text(
+        PAGES.replace('slug="notebook-lesson-1-your-first-note"', 'slug="Notebook Lesson 1"'), encoding="utf-8"
+    )
+    lesson = pages.parent / "first_note.py"
+    lesson.write_text(
+        "import pages\nfrom pageant.studio import Lesson\n\nLESSON = Lesson(pages.FIRST)\n", encoding="utf-8"
+    )
+
+    assert cli.main(["record", str(lesson)]) == 1
+    said = capsys.readouterr().err
+    assert said.startswith("A learning site's import would refuse what these would write:\n")
+    assert '- first-note/lesson.json, /slug: "Notebook Lesson 1" is not of its form.' in said
+    assert stand_in_studio == [], "nothing was filmed"
+
+
+def test_pack_says_every_reason_a_page_is_refused_and_writes_no_pack(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pages = _project(tmp_path)
+    pages.write_text(
+        PAGES.replace('slug="notebook-lesson-1-your-first-note"', 'slug="Notebook Lesson 1"').replace(
+            'title="Notebook: getting started"', 'title="  "'
+        ),
+        encoding="utf-8",
+    )
+    out = pages.parent / "out"
+    _recorded(out)
+
+    assert cli.main(["pack", str(pages)]) == 1
+    said = capsys.readouterr().err
+    assert "- first-note/lesson.json, /slug: " in said
+    assert "- path.json, /title: " in said
+    assert "- path.json, /lessons/0: " in said
+    assert not (out / cli.PACK).exists()
+
+
 def test_record_says_what_recording_takes_that_is_not_here(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

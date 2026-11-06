@@ -16,9 +16,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from import_rules import page_refusals, path_refusals
 
-from pageant import bundle
+from pageant import bundle, schema
 
 FIRST = bundle.Page(
     folder="first-note",
@@ -71,7 +70,7 @@ def test_a_page_is_written_as_the_import_reads_it(tmp_path: Path) -> None:
         "tags": ["notebook", "video"],
         "body_markdown": "## What you will see\n\n- A note.\n",
     }
-    assert page_refusals(data) == []
+    assert schema.problems(data, schema.load(schema.LESSON)) == []
 
 
 def test_a_youtube_link_is_written_once_a_page_has_one() -> None:
@@ -103,7 +102,7 @@ def test_a_pack_holds_each_lesson_the_import_reads_and_the_path_in_order(tmp_pat
         )
         page = json.loads(archive.read("notebook-lessons/first-note/lesson.json"))
         assert page["slug"] == FIRST.slug, "the page is written afresh, not the one left on disk"
-        assert page_refusals(page) == []
+        assert schema.problems(page, schema.load(schema.LESSON)) == []
         assert archive.read("notebook-lessons/first-note/video.mp4") == b"first-note/video.mp4"
         assert archive.getinfo("notebook-lessons/first-note/video.mp4").compress_type == zipfile.ZIP_STORED
         assert archive.getinfo("notebook-lessons/first-note/cover.jpg").compress_type == zipfile.ZIP_STORED
@@ -116,7 +115,7 @@ def test_a_pack_holds_each_lesson_the_import_reads_and_the_path_in_order(tmp_pat
             "description": "Two short lessons.",
             "lessons": [FIRST.slug, SECOND.slug],
         }
-        assert path_refusals(path) == []
+        assert schema.problems(path, schema.load(schema.PATH)) == []
     assert json.loads((tmp_path / "first-note" / "lesson.json").read_text(encoding="utf-8"))["slug"] == FIRST.slug
 
 

@@ -186,6 +186,13 @@ zips each recorded lesson of `PATH`, its page written afresh, with the path that
 and showing what the import will do before it saves anything, and publishes each page at
 `<site>/learn/<slug>`. A lesson not recorded whole stops the pack, naming what is missing.
 
+[`SPEC.md`](SPEC.md) is the format: a bundle's files, each member of `lesson.json` and
+`path.json` and its limits, and what a reader does. Each document has a JSON Schema, published
+at the address its `$id` names, and a case table of documents a reader takes and documents it
+refuses, each with its reason (`src/pageant/schemas/1/`). Every page and path Pageant writes is
+held to its schema, so one the import would refuse stops `pageant record` before anything is
+filmed, and `pageant pack` before anything is zipped, with every reason at once.
+
 ### YouTube
 
 ```bash
@@ -235,7 +242,9 @@ ruff check . && ruff format --check . && mypy && pytest
 
 The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows; CI's record
 job films the example lesson from a fresh install of the wheel, on Linux, and keeps the video as
-an artifact of the run. `tests/test_boundary.py` fails if the engine names a product it films.
+an artifact of the run. `tests/test_boundary.py` fails if the engine names a product it films, and
+`tests/test_schemas.py` holds the schemas and their case tables to Pageant's checker, to a
+reference implementation of JSON Schema, to the writer and to `SPEC.md`.
 
 ## License
 

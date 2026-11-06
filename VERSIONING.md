@@ -14,7 +14,19 @@ says so when it does. From 1.0:
 
 The bundle and pack formats are Sigrix's, and each file says its own version (`"format":
 "sigrix-lesson/1"`, `"sigrix-learning-path/1"`). Pageant writes the versions Sigrix's import reads,
-and moves to a new one only once that import reads it.
+and moves to a new one only once that import reads it. `SPEC.md` says what a new version is.
+
+## The schemas
+
+Each format's JSON Schema declares an `$id` under `https://sigrix.io/schemas/pageant/`, followed
+by its format's major version, and Sigrix serves it there:
+
+- **A published `$id` is permanent.** The document at it may be corrected; the address is never
+  reused for anything else, and never withdrawn.
+- **A new major version is a new folder**, `schemas/2/` beside `schemas/1/`, published at its own
+  address, and the old one keeps answering.
+- **A rule changes here first**, with its cases in the table and its words in `SPEC.md`, and then
+  in the import, which vendors the schemas and their tables and runs the same tables.
 
 ## The record extra
 

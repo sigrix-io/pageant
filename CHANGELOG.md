@@ -20,6 +20,15 @@ described in `VERSIONING.md`.
 - The example lesson, Notebook: a one-page app the package ships, filmed in three chapters, with
   a terminal. CI records it from a fresh install of the wheel.
 - `import pageant` needs only the standard library. Recording takes the `record` extra.
+- The format written down: `SPEC.md`, and a JSON Schema for `lesson.json` (`sigrix-lesson/1`)
+  and for `path.json` (`sigrix-learning-path/1`), each with a case table of documents a reader
+  takes and documents it refuses with the reason (`src/pageant/schemas/1/`, read through
+  `pageant.schema`). Each schema's `$id` is the address it is published at,
+  `https://sigrix.io/schemas/pageant/1/`.
+- Every page and path the writer writes is held to its schema: `bundle.page_json`,
+  `bundle.path_json` and `bundle.pack` refuse one the import would refuse, with every reason
+  (`bundle.ManifestRefused`), and `pageant record` stops on such a page before anything is
+  filmed.
 
 ### Changed, from Bailey's `lessons/`
 

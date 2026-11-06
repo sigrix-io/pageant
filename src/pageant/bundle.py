@@ -4,7 +4,10 @@ Sigrix's Learn console imports a lesson from a **bundle**: a folder holding its 
 and its media under fixed names (``video.mp4``, ``captions.vtt``, ``chapters.vtt``, ``cover.jpg``).
 A **pack** is a zip of bundles with the learning path that lists them (``path.json``), and its
 Import lessons page checks every lesson, shows what importing them will do, and saves them. The
-format is Sigrix's (``sigrix-lesson/1`` and ``sigrix-learning-path/1``); this module writes it.
+format is Sigrix's (``sigrix-lesson/1`` and ``sigrix-learning-path/1``), written down in
+``SPEC.md`` and in a JSON Schema for each of its two documents (``schema.py``); this module
+writes it, and holds every page and path it writes to its schema, so a page the import would
+refuse is refused here, with every reason, before anything is written.
 
 A lesson records into a folder of its own (``studio.record``), named by its page's ``folder``, which
 is its bundle: the files above, and ``chapters.txt`` for a YouTube description, which an import
@@ -17,15 +20,19 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pageant import schema
 
 LESSON_FORMAT = "sigrix-lesson/1"
 PATH_FORMAT = "sigrix-learning-path/1"
 #: Where an import publishes a lesson's page: ``<site>/learn/<slug>``.
 DEFAULT_SITE = "https://sigrix.io"
 PAGE = "lesson.json"
+PATH_PAGE = "path.json"
 VIDEO = "video.mp4"
 CAPTIONS = "captions.vtt"
 CHAPTERS = "chapters.vtt"
@@ -37,6 +44,17 @@ RECORDED = (VIDEO, CAPTIONS, CHAPTERS, COVER)
 PACKED = (PAGE, *RECORDED)
 #: The media is compressed already; the text is not.
 _STORED = frozenset({VIDEO, COVER})
+_PAGE_SCHEMA = schema.load(schema.LESSON)
+_PATH_SCHEMA = schema.load(schema.PATH)
+
+
+class ManifestRefused(ValueError):
+    """Pages or a path the format's schemas refuse, as the import would: each file, and every reason."""
+
+    def __init__(self, found: Sequence[tuple[str, schema.Problem]]) -> None:
+        self.problems = tuple(found)
+        reasons = "\n".join(f"- {file}, {problem}" for file, problem in self.problems)
+        super().__init__(f"A learning site's import would refuse what these would write:\n{reasons}")
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,37 @@ class LearningPath:
 
 
 def page_json(page: Page) -> dict[str, Any]:
+    """``page`` as ``lesson.json``, or ``ManifestRefused`` with every reason its schema gives."""
+
+    data = _page_data(page)
+    _hold([(f"{page.folder}/{PAGE}", data, _PAGE_SCHEMA)])
+    return data
+
+
+def path_json(path: LearningPath) -> dict[str, Any]:
+    """``path`` as ``path.json``, or ``ManifestRefused`` with every reason its schema gives."""
+
+    data = _path_data(path)
+    _hold([(PATH_PAGE, data, _PATH_SCHEMA)])
+    return data
+
+
+def check(path: LearningPath) -> None:
+    """Refuse, with every reason at once, a path that its schema, or any of its pages' schema, refuses."""
+
+    _hold(
+        [(f"{page.folder}/{PAGE}", _page_data(page), _PAGE_SCHEMA) for page in path.lessons]
+        + [(PATH_PAGE, _path_data(path), _PATH_SCHEMA)]
+    )
+
+
+def _hold(documents: Iterable[tuple[str, Any, dict[str, Any]]]) -> None:
+    found = [(file, problem) for file, data, rules in documents for problem in schema.problems(data, rules)]
+    if found:
+        raise ManifestRefused(found)
+
+
+def _page_data(page: Page) -> dict[str, Any]:
     data: dict[str, Any] = {
         "format": LESSON_FORMAT,
         "slug": page.slug,
@@ -89,7 +138,7 @@ def page_json(page: Page) -> dict[str, Any]:
     return data
 
 
-def path_json(path: LearningPath) -> dict[str, Any]:
+def _path_data(path: LearningPath) -> dict[str, Any]:
     return {
         "format": PATH_FORMAT,
         "title": path.title,
@@ -114,10 +163,12 @@ def write_page(page: Page, folder: Path) -> Path:
 def pack(out: Path, path: LearningPath, target: Path) -> Path:
     """Zip each lesson of ``path`` recorded in ``out``, its page written afresh, with the path itself.
 
-    Refuses, naming every file missing, if a lesson has not been recorded whole: a pack that leaves
-    one out would import a path naming a lesson that is not there.
+    Refuses, with every reason, a path or a page the format's schemas refuse; and, naming every
+    file missing, a lesson not recorded whole, since a pack that leaves one out would import a
+    path naming a lesson that is not there.
     """
 
+    check(path)
     missing = [
         f"{page.folder}/{name}"
         for page in path.lessons
@@ -135,7 +186,7 @@ def pack(out: Path, path: LearningPath, target: Path) -> Path:
             for name in PACKED:
                 kind = zipfile.ZIP_STORED if name in _STORED else zipfile.ZIP_DEFLATED
                 archive.write(folder / name, f"{root}/{page.folder}/{name}", compress_type=kind)
-        archive.writestr(f"{root}/path.json", _json(path_json(path)), compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr(f"{root}/{PATH_PAGE}", _json(path_json(path)), compress_type=zipfile.ZIP_DEFLATED)
     return target
 
 
@@ -147,10 +198,13 @@ __all__ = [
     "LESSON_FORMAT",
     "PAGE",
     "PATH_FORMAT",
+    "PATH_PAGE",
     "VIDEO",
     "YOUTUBE_CHAPTERS",
     "LearningPath",
+    "ManifestRefused",
     "Page",
+    "check",
     "pack",
     "page_json",
     "path_json",
