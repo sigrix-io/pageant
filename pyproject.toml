@@ -35,7 +35,7 @@ dependencies = []
 # with, since a bump can change how a recording looks or sounds. numpy is named because the
 # voice, the music and the mix use it directly; Kokoro brings it too.
 record = [
-    "playwright==1.63.0",
+    "playwright==1.64.1",
     "kokoro-onnx==0.6.1",
     "numpy>=2",
 ]
