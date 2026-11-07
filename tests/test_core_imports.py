@@ -5,7 +5,7 @@ megabytes a project that only packs its lessons or writes their YouTube text nev
 core modules, and the command line until ``pageant record`` runs, import none of them, nor the
 modules of the package that do. Checked in a fresh interpreter, where nothing else has imported
 them first; CI's test job runs it without the extra installed, where an import would fail, and the
-types job with it, where one would succeed.
+studio job with it, where one would succeed.
 """
 
 from __future__ import annotations

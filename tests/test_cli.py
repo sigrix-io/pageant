@@ -141,19 +141,26 @@ class _Lesson:
 
 @pytest.fixture
 def stand_in_studio(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """``pageant.studio`` as a stand-in that records nothing, and says what it was asked to record."""
+    """``pageant.studio`` as a stand-in that records and rehearses nothing, and says what it was asked to."""
 
     asked: list[dict[str, Any]] = []
 
     async def record(
         lesson: _Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False
     ) -> dict[str, str]:
-        asked.append({"lesson": lesson, "out": out, "chromium": chromium, "keep_work": keep_work})
+        asked.append({"to": "record", "lesson": lesson, "out": out, "chromium": chromium, "keep_work": keep_work})
         return {"bundle": str(out / lesson.page.folder)}
+
+    async def rehearse(
+        lesson: _Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False
+    ) -> dict[str, str]:
+        asked.append({"to": "rehearse", "lesson": lesson, "out": out, "chromium": chromium, "keep_work": keep_work})
+        return {"rehearsed": lesson.page.folder}
 
     studio = types.ModuleType("pageant.studio")
     studio.Lesson = _Lesson  # type: ignore[attr-defined]
     studio.record = record  # type: ignore[attr-defined]
+    studio.rehearse = rehearse  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "pageant.studio", studio)
     monkeypatch.setattr(pageant, "studio", studio, raising=False)
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -187,19 +194,50 @@ def test_record_loads_the_lesson_beside_its_pages_and_records_it_into_out_beside
     assert (stand_in_studio[1]["chromium"], stand_in_studio[1]["keep_work"]) == ("/from/the/environment", False)
 
 
-def test_record_names_a_file_without_a_lesson(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], stand_in_studio: list[dict[str, Any]]
+def test_rehearse_runs_the_lesson_beside_its_pages_with_no_ffmpeg_and_says_what_it_went_through(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    stand_in_studio: list[dict[str, Any]],
+) -> None:
+    pages = _project(tmp_path)
+    lesson = pages.parent / "first_note.py"
+    lesson.write_text(
+        "import pages\nfrom pageant.studio import Lesson\n\nLESSON = Lesson(pages.FIRST)\n", encoding="utf-8"
+    )
+    # A rehearsal encodes nothing, so a computer without ffmpeg rehearses.
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    assert cli.main(["rehearse", str(lesson), "--chromium", "/opt/chromium", "--keep-work"]) == 0
+
+    [asked] = stand_in_studio
+    assert asked["to"] == "rehearse"
+    assert asked["lesson"].page.slug == "notebook-lesson-1-your-first-note", "it imported the pages beside it"
+    assert asked["out"] == pages.parent.resolve() / "out"
+    assert (asked["chromium"], asked["keep_work"]) == ("/opt/chromium", True)
+    assert json.loads(capsys.readouterr().out) == {"rehearsed": "first-note"}
+
+    monkeypatch.setenv("PAGEANT_CHROMIUM", "/from/the/environment")
+    assert cli.main(["rehearse", str(lesson), "--out", str(tmp_path / "elsewhere")]) == 0
+    assert stand_in_studio[1]["out"] == tmp_path / "elsewhere"
+    assert (stand_in_studio[1]["chromium"], stand_in_studio[1]["keep_work"]) == ("/from/the/environment", False)
+
+
+@pytest.mark.parametrize("command", ["record", "rehearse"])
+def test_record_and_rehearse_name_a_file_without_a_lesson(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stand_in_studio: list[dict[str, Any]], command: str
 ) -> None:
     lesson = tmp_path / "lesson.py"
     lesson.write_text("LESSONS = []\n", encoding="utf-8")
 
-    assert cli.main(["record", str(lesson)]) == 1
+    assert cli.main([command, str(lesson)]) == 1
     assert "names no LESSON" in capsys.readouterr().err
     assert stand_in_studio == []
 
 
-def test_record_stops_on_a_page_the_import_would_refuse_before_anything_is_filmed(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], stand_in_studio: list[dict[str, Any]]
+@pytest.mark.parametrize("command", ["record", "rehearse"])
+def test_record_and_rehearse_stop_on_a_page_the_import_would_refuse_before_anything_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stand_in_studio: list[dict[str, Any]], command: str
 ) -> None:
     pages = _project(tmp_path)
     pages.write_text(
@@ -210,11 +248,11 @@ def test_record_stops_on_a_page_the_import_would_refuse_before_anything_is_filme
         "import pages\nfrom pageant.studio import Lesson\n\nLESSON = Lesson(pages.FIRST)\n", encoding="utf-8"
     )
 
-    assert cli.main(["record", str(lesson)]) == 1
+    assert cli.main([command, str(lesson)]) == 1
     said = capsys.readouterr().err
     assert said.startswith("A learning site's import would refuse what these would write:\n")
     assert '- first-note/lesson.json, /slug: "Notebook Lesson 1" is not of its form.' in said
-    assert stand_in_studio == [], "nothing was filmed"
+    assert stand_in_studio == [], "nothing was filmed or rehearsed"
 
 
 def test_pack_says_every_reason_a_page_is_refused_and_writes_no_pack(
@@ -238,15 +276,23 @@ def test_pack_says_every_reason_a_page_is_refused_and_writes_no_pack(
     assert not (out / cli.PACK).exists()
 
 
+def _as_if_the_record_extra_were_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Playwright, and every part of it already imported, as an import finds a package that is not
+    there: where the record extra is installed, tests/test_studio.py has imported them first."""
+
+    for name in [name for name in sys.modules if name.split(".")[0] == "playwright"] + ["playwright"]:
+        monkeypatch.setitem(sys.modules, name, None)
+    monkeypatch.delitem(sys.modules, "pageant.studio", raising=False)
+    monkeypatch.delattr(pageant, "studio", raising=False)
+
+
 def test_record_says_what_recording_takes_that_is_not_here(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     lesson = tmp_path / "lesson.py"
     lesson.write_text("raise AssertionError('the lesson is not loaded before recording can run')\n", encoding="utf-8")
     # As if neither the record extra nor ffmpeg were installed.
-    monkeypatch.setitem(sys.modules, "playwright", None)
-    monkeypatch.delitem(sys.modules, "pageant.studio", raising=False)
-    monkeypatch.delattr(pageant, "studio", raising=False)
+    _as_if_the_record_extra_were_not_installed(monkeypatch)
     monkeypatch.setattr(shutil, "which", lambda name: None)
 
     assert cli.main(["record", str(lesson)]) == 1
@@ -254,6 +300,20 @@ def test_record_says_what_recording_takes_that_is_not_here(
     assert said.startswith("Recording takes what is not here:\n")
     assert '- the record extra, which installs playwright: pip install "pageant[record]"\n' in said
     assert "- ffmpeg on the PATH, which encodes the video and mixes its sound\n" in said
+
+
+def test_rehearse_says_it_takes_the_record_extra_and_not_ffmpeg(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lesson = tmp_path / "lesson.py"
+    lesson.write_text("raise AssertionError('the lesson is not loaded before rehearsing can run')\n", encoding="utf-8")
+    _as_if_the_record_extra_were_not_installed(monkeypatch)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    assert cli.main(["rehearse", str(lesson)]) == 1
+    assert capsys.readouterr().err == (
+        'Rehearsing takes what is not here:\n- the record extra, which installs playwright: pip install "pageant[record]"\n'
+    )
 
 
 def test_example_writes_the_example_lesson_into_a_new_folder_and_nowhere_else(

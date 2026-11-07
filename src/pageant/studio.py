@@ -18,6 +18,13 @@ Every line is spoken before the recording starts (``narrate.py``), so each capti
 exactly as long as its voice, and the sound is mixed in at the end (``mixdown.py``). A step the app
 no longer has (a locator that finds nothing) stops the recording with an error, and the page is
 kept as ``failure.png`` beside it, so an app that changed never ships a stale video.
+
+A step that goes to another page (a link, a form post, a redirect such as a checkout's) starts a
+new document, and the overlay starts afresh in each, so the studio keeps what is on screen (the
+chapter label, the caption, the title card and where the pointer is) and draws it on every page
+the lesson goes to as that page loads. ``rehearse`` runs a lesson as ``record`` does, with nothing
+spoken or filmed and every long wait cut short, to find a step the app no longer has before a
+recording spends its minutes on it.
 """
 
 from __future__ import annotations
@@ -25,19 +32,22 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import math
 import mimetypes
 import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from re import Pattern
 from typing import Any, Literal
 
-from playwright.async_api import Locator, Page, async_playwright
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import FloatRect, Frame, Locator, Page, async_playwright
 
 from pageant import apps, bundle, mixdown, narrate, timeline
 from pageant.apps import App, Running
@@ -47,6 +57,16 @@ WIDTH, HEIGHT, SCALE = 1280, 720, 1.5
 #: A voice starts a moment after its caption fades in, and the next line waits a breath after it.
 VOICE_LEAD = 0.25
 VOICE_GAP = 0.45
+#: A step that scrolls to an element reads its box this often, in seconds, until two reads agree,
+#: and moves on this long after the scroll began at most. Chromium's smooth scroll takes longer the
+#: further it goes: about 450 ms for 500 px, and 1.5 s for the longest.
+SETTLE_POLL = 0.12
+SETTLE_CAP = 3.0
+#: A draw that a page load cuts off is made again on the page that replaced it, up to this many
+#: pages in a row.
+DRAW_ATTEMPTS = 3
+#: In a rehearsal, no wait is longer than this, in seconds.
+REHEARSAL_WAIT = 0.25
 
 
 @dataclass(frozen=True)
@@ -119,6 +139,20 @@ class _Caption:
     end: float | None = None
 
 
+def _middle(box: FloatRect | None) -> tuple[float, float] | None:
+    return None if box is None else (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+
+def _held(before: FloatRect | None, after: FloatRect | None) -> bool:
+    """Whether an element held still between two reads of its box: its middle, where the pointer
+    goes, within half a pixel of where it was, or the element not shown at either."""
+
+    was, now = _middle(before), _middle(after)
+    if was is None or now is None:
+        return was is None and now is None
+    return math.dist(was, now) < 0.5
+
+
 @dataclass
 class Studio:
     """What a lesson's steps call. Times are seconds since the recording started."""
@@ -139,21 +173,108 @@ class Studio:
     terminal_url: str = ""
     shell_env: Mapping[str, str] = field(default_factory=dict)
     where: str = "~"
-    #: The chapter label on screen, drawn again on a page the lesson goes to.
+    #: The chapter label on screen. It, the caption and the title card on screen, and the pointer at
+    #: ``mouse``, are drawn again on every page the lesson goes to, as that page loads.
     label: str | None = None
+    #: A rehearsal (``rehearse``): nothing is spoken or filmed, and no wait is longer than
+    #: ``REHEARSAL_WAIT``.
+    rehearsal: bool = False
+    _caption: str | None = field(default=None, init=False, repr=False)
+    _card: Mapping[str, str] | None = field(default=None, init=False, repr=False)
+    #: Takes away the script that hands what is on screen to the next document (``_carry``).
+    _uncarry: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False)
+    _carrying: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _drawing: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.page.on("framenavigated", self._went)
 
     def clock(self) -> float:
         return time.time() - self.started
 
     async def sleep(self, ms: float) -> None:
-        await asyncio.sleep(ms / 1000)
+        await self._wait(ms / 1000)
+
+    async def _wait(self, seconds: float) -> None:
+        """Wait, as a recording does; a rehearsal waits ``REHEARSAL_WAIT`` at most."""
+
+        await asyncio.sleep(min(seconds, REHEARSAL_WAIT) if self.rehearsal else seconds)
+
+    def _screen(self) -> dict[str, Any]:
+        """What is on screen, as ``overlay.js`` draws it: the label, the caption, the card, and the pointer."""
+
+        card = None if self._card is None else dict(self._card)
+        return {"label": self.label, "caption": self._caption, "card": card, "at": list(self.mouse)}
+
+    async def _on_page(self, expression: str, arg: Callable[[], Any] = lambda: None) -> None:
+        """Evaluate ``expression`` with ``arg()`` on the page as it is now.
+
+        A page load can cut it off: a click that went to another page, or a redirect, replaces the
+        document it was sent to while it runs. Then it is made again, ``arg()`` read afresh, on the
+        document that replaced it, up to ``DRAW_ATTEMPTS`` in a row; anything else fails each time,
+        and the last failure is raised.
+        """
+
+        for attempt in range(1, DRAW_ATTEMPTS + 1):
+            try:
+                await self.page.evaluate(expression, arg())
+                return
+            except PlaywrightError:
+                if attempt == DRAW_ATTEMPTS or self.page.is_closed():
+                    raise
+
+    async def _carry(self) -> None:
+        """Hand what is on screen to the next document the page loads, to draw before its first frame.
+
+        A script of the page's own, which runs as each new document starts, after the overlay's and
+        before the page's scripts, in the page itself and not the frames in it; it is replaced each
+        time what is on screen changes.
+        """
+
+        async with self._carrying:
+            script = f"window === window.top && window.__demo && window.__demo.show({json.dumps(self._screen())});"
+            carried = await self.page.add_init_script(script=script)
+            if self._uncarry is not None:
+                await self._uncarry()
+            self._uncarry = carried.close
+
+    async def _show(self) -> None:
+        """Draw what is on screen on the page as it is now, and on the next page from its first frame."""
+
+        await self._carry()
+        await self._on_page("screen => window.__demo.show(screen)", self._screen)
+
+    def _went(self, frame: Frame) -> None:
+        """A page the lesson went to, as it starts to load: draw on it what the last page had.
+
+        The next document drew what was on screen as it started (``_carry``), but a step that ran
+        while it loaded may have changed that, so it is drawn again now.
+        """
+
+        if frame.parent_frame is not None:
+            return
+        drawing = asyncio.ensure_future(self._show_quietly())
+        self._drawing.add(drawing)
+        drawing.add_done_callback(self._drawing.discard)
+
+    async def _show_quietly(self) -> None:
+        # A page that is gone before it is drawn needs drawing no more: the one that replaced it is
+        # drawn in its turn. A page that cannot be drawn on fails the next step that draws.
+        with contextlib.suppress(PlaywrightError):
+            await self._on_page("screen => window.__demo.show(screen)", self._screen)
+
+    async def _drawn(self) -> None:
+        """Wait for the pages the lesson went to to be drawn."""
+
+        await asyncio.gather(*self._drawing, return_exceptions=True)
 
     async def card(self, spec: Mapping[str, str] | None, hold_ms: float = 0) -> None:
         """A title card over the page, with the product's mark unless ``spec`` names one; ``None`` lifts it."""
 
         if spec is not None and self.lesson.mark is not None and "mark" not in spec:
             spec = {**spec, "mark": self.lesson.mark.url}
-        await self.page.evaluate("spec => window.__demo.card(spec)", spec)
+        self._card = spec
+        await self._show()
         await self.sleep(hold_ms)
 
     async def chapter(self, title: str | None) -> None:
@@ -162,14 +283,14 @@ class Studio:
         if title:
             self.marks.append(timeline.Mark(self.clock(), title))
         self.label = title
-        await self.page.evaluate("title => window.__demo.chapter(title)", title)
+        await self._show()
 
     async def _voice_free(self) -> None:
         """Never two voices at once: a line waits for the one before it, and a breath after."""
 
         busy = self.voice_until - time.time()
         if busy > 0:
-            await asyncio.sleep(busy + VOICE_GAP)
+            await self._wait(busy + VOICE_GAP)
 
     def _speak(self, clip: narrate.Clip) -> float:
         """Start a clip now; how long to wait for it, and the breath after."""
@@ -197,9 +318,10 @@ class Studio:
             await self._voice_free()
         self._close_caption()
         self.captions.append(_Caption(self.clock(), text))
-        await self.page.evaluate("text => window.__demo.caption(text)", text)
+        self._caption = text
+        await self._show()
         natural = self._speak(clip) if clip else max(2.4, len(text) * 0.06)
-        await asyncio.sleep(natural if hold_ms is None else hold_ms / 1000)
+        await self._wait(natural if hold_ms is None else hold_ms / 1000)
 
     async def voice(self, key: str, extra_ms: float = 0) -> None:
         """A line spoken over a card, with no caption on screen; the captions file still has it."""
@@ -209,36 +331,56 @@ class Studio:
             await self._voice_free()
             start = self.clock() + VOICE_LEAD
             self.spoken_only.append(timeline.Cue(start, start + clip.seconds + 0.3, self.lesson.narration[key]["text"]))
-            await asyncio.sleep(self._speak(clip))
+            await self._wait(self._speak(clip))
         await self.sleep(extra_ms)
 
     async def quiet(self) -> None:
         self._close_caption()
-        await self.page.evaluate("() => window.__demo.caption(null)")
+        self._caption = None
+        await self._show()
+
+    async def _scroll_to(self, locator: Locator, pause_ms: float) -> FloatRect | None:
+        """Scroll smoothly until ``locator`` is in the middle of the page; its box once it is still.
+
+        A smooth scroll takes longer the further it goes, so once ``pause_ms`` has passed, its box
+        is read every ``SETTLE_POLL`` until two reads in a row agree, and at most until
+        ``SETTLE_CAP`` after the scroll began: a short scroll is over by the pause, and the pointer
+        goes to where a long one ends, not to where the element was on its way there.
+        """
+
+        await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
+        until = time.monotonic() + SETTLE_CAP
+        await self.sleep(pause_ms - SETTLE_POLL * 1000)
+        box = await locator.bounding_box()
+        while True:
+            await asyncio.sleep(SETTLE_POLL)
+            then, box = box, await locator.bounding_box()
+            if _held(then, box) or time.monotonic() >= until:
+                return box
 
     async def spot(self, locator: Locator | None, padding: float = 8) -> None:
         """Dim the page around ``locator``, scrolled into view; ``None`` lifts the spotlight."""
 
         if locator is None:
-            await self.page.evaluate("() => window.__demo.spot(null)")
+            await self._on_page("() => window.__demo.spot(null)")
             return
-        await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
-        await self.sleep(550)
+        await self._scroll_to(locator, 550)
         await locator.evaluate("(el, padding) => window.__demo.spot(el, padding)", padding)
         await self.sleep(450)
 
     async def glide(self, locator: Locator) -> None:
-        """Move the cursor to the middle of ``locator`` as a hand would, not in one jump."""
+        """Move the cursor to the middle of ``locator`` as a hand would, not in one jump, once the
+        page has stopped scrolling to it."""
 
-        await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
-        await self.sleep(450)
-        box = await locator.bounding_box()
+        box = await self._scroll_to(locator, 450)
         if box is None:
             raise RuntimeError(f"{locator} is not on the page")
         x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         steps = max(14, round(math.hypot(x - self.mouse[0], y - self.mouse[1]) / 14))
         await self.page.mouse.move(x, y, steps=steps)
         self.mouse = (x, y)
+        # A click here may go to another page, which draws the pointer here from its first frame.
+        await self._carry()
         await self.sleep(220)
 
     async def click(self, locator: Locator) -> None:
@@ -249,6 +391,18 @@ class Studio:
         await self.page.mouse.up()
         await self.sleep(350)
 
+    async def arrive(self, url: str | Pattern[str] | Callable[[str], bool]) -> None:
+        """Wait for the page a step went to, loaded, with what was on screen drawn on it.
+
+        ``url`` is where the step goes, as Playwright's ``wait_for_url`` takes it: the address, a
+        glob such as ``"**/checkout/done"``, a regular expression, or a function of the address.
+        Every page the lesson goes to is drawn as it loads, whether a lesson arrives there or not;
+        this is for the step after, so it does not start on the page before.
+        """
+
+        await self.page.wait_for_url(url)
+        await self._show()
+
     async def terminal(self, title: str = "Terminal", where: str = "~") -> None:
         """Leave the app's page for the terminal, where shell() runs commands, and put the pointer away."""
 
@@ -256,10 +410,11 @@ class Studio:
         await self.page.goto(self.terminal_url)
         await self.page.wait_for_function("() => window.__term && window.__demo && window.__demo.ready()")
         await self.page.evaluate(
-            "([title, where, label]) => { window.__term.title(title); window.__term.prompt(where);"
-            " window.__demo.pointer(false); window.__demo.chapter(label); }",
-            [title, where, self.label],
+            "([title, where]) => { window.__term.title(title); window.__term.prompt(where);"
+            " window.__demo.pointer(false); }",
+            [title, where],
         )
+        await self._show()
 
     async def shell(self, command: str, delay_ms: float = 45) -> int:
         """Type a command at the prompt, run it for real in a shell of its own, and show what it prints as it prints it.
@@ -297,17 +452,25 @@ class Studio:
             await locator.press_sequentially(line, delay=delay_ms)
 
 
-async def _capture(
-    lesson: Lesson, out: Path, work: Path, chromium: str | None
-) -> tuple[Studio, list[tuple[Path, float]], float]:
-    """Record the lesson's frames into its folder ``out``; the studio's log of it, each frame with when it
-    was painted, and when it stopped."""
+@contextlib.asynccontextmanager
+async def _staged(
+    lesson: Lesson,
+    out: Path,
+    work: Path,
+    chromium: str | None,
+    clips: Mapping[str, narrate.Clip],
+    *,
+    rehearsal: bool = False,
+) -> AsyncIterator[Studio]:
+    """The lesson's app started, its page open in Chromium under the overlay, the lesson's setup run
+    on it, and the studio that drives it.
 
-    clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice)) if lesson.narration else {}
-    frames_folder = work / "frames"
-    frames_folder.mkdir()
-    frames: list[tuple[Path, float]] = []
-    acks: set[asyncio.Future[Any]] = set()
+    A step that fails, in the setup or in what the caller runs, keeps the page as ``failure.png`` in
+    ``out``; one an earlier run left there is removed first.
+    """
+
+    failure = out / "failure.png"
+    failure.unlink(missing_ok=True)
     served = {"/": HERE / "terminal.html"}
     if lesson.mark is not None and lesson.mark.url.startswith("/"):
         served[lesson.mark.url] = lesson.mark.file
@@ -325,7 +488,7 @@ async def _capture(
             context = await browser.new_context(viewport=None, color_scheme=lesson.color_scheme)
             await context.add_init_script(path=HERE / "overlay.js")
             page = await context.new_page()
-            studio = Studio(page, lesson, clips, work)
+            studio = Studio(page, lesson, clips, work, rehearsal=rehearsal)
             studio.terminal_url = f"http://127.0.0.1:{files.server_address[1]}/"
             studio.shell_env = {**running.env, "PYTHONUNBUFFERED": "1", "TERM": "xterm-256color"}
             try:
@@ -341,48 +504,65 @@ async def _capture(
                     studio.marks.clear()
                     studio.spoken.clear()
                     studio.spoken_only.clear()
-                await page.mouse.move(*studio.mouse)
-                await studio.card(lesson.title, 700)
-                cdp = await context.new_cdp_session(page)
-                # The poster is the title card, taken over CDP as the frames are, at 1920x1080.
-                poster = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
-                (out / bundle.COVER).write_bytes(base64.b64decode(poster["data"]))
-
-                def painted(frame: dict[str, Any]) -> None:
-                    file = frames_folder / f"f{len(frames):06d}.jpg"
-                    file.write_bytes(base64.b64decode(frame["data"]))
-                    frames.append((file, time.time()))
-                    ack = asyncio.ensure_future(cdp.send("Page.screencastFrameAck", {"sessionId": frame["sessionId"]}))
-                    acks.add(ack)
-                    ack.add_done_callback(settled)
-
-                def settled(ack: asyncio.Future[Any]) -> None:
-                    # An ack still in flight when the page closes fails; that failure is expected.
-                    acks.discard(ack)
-                    if not ack.cancelled():
-                        ack.exception()
-
-                cdp.on("Page.screencastFrame", painted)
-                studio.started = time.time()
-                await cdp.send(
-                    "Page.startScreencast",
-                    {"format": "jpeg", "quality": 90, "maxWidth": int(WIDTH * SCALE), "maxHeight": int(HEIGHT * SCALE)},
-                )
-                await lesson.run(studio)
-                await studio.quiet()
-                await asyncio.sleep(max(0.4, studio.voice_until - time.time() + 0.4))
-                stopped = time.time()
-                await cdp.send("Page.stopScreencast")
+                yield studio
             except Exception:
                 with contextlib.suppress(Exception):
-                    await page.screenshot(path=out / "failure.png")
+                    await page.screenshot(path=failure)
                 raise
             finally:
+                await studio._drawn()
                 await context.close()
                 await browser.close()
     finally:
         files.shutdown()
         running.stop()
+
+
+async def _capture(
+    lesson: Lesson, out: Path, work: Path, chromium: str | None
+) -> tuple[Studio, list[tuple[Path, float]], float]:
+    """Record the lesson's frames into its folder ``out``; the studio's log of it, each frame with when it
+    was painted, and when it stopped."""
+
+    clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice)) if lesson.narration else {}
+    frames_folder = work / "frames"
+    frames_folder.mkdir()
+    frames: list[tuple[Path, float]] = []
+    acks: set[asyncio.Future[Any]] = set()
+    async with _staged(lesson, out, work, chromium, clips) as studio:
+        page = studio.page
+        await page.mouse.move(*studio.mouse)
+        await studio.card(lesson.title, 700)
+        cdp = await page.context.new_cdp_session(page)
+        # The poster is the title card, taken over CDP as the frames are, at 1920x1080.
+        poster = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
+        (out / bundle.COVER).write_bytes(base64.b64decode(poster["data"]))
+
+        def painted(frame: dict[str, Any]) -> None:
+            file = frames_folder / f"f{len(frames):06d}.jpg"
+            file.write_bytes(base64.b64decode(frame["data"]))
+            frames.append((file, time.time()))
+            ack = asyncio.ensure_future(cdp.send("Page.screencastFrameAck", {"sessionId": frame["sessionId"]}))
+            acks.add(ack)
+            ack.add_done_callback(settled)
+
+        def settled(ack: asyncio.Future[Any]) -> None:
+            # An ack still in flight when the page closes fails; that failure is expected.
+            acks.discard(ack)
+            if not ack.cancelled():
+                ack.exception()
+
+        cdp.on("Page.screencastFrame", painted)
+        studio.started = time.time()
+        await cdp.send(
+            "Page.startScreencast",
+            {"format": "jpeg", "quality": 90, "maxWidth": int(WIDTH * SCALE), "maxHeight": int(HEIGHT * SCALE)},
+        )
+        await lesson.run(studio)
+        await studio.quiet()
+        await asyncio.sleep(max(0.4, studio.voice_until - time.time() + 0.4))
+        stopped = time.time()
+        await cdp.send("Page.stopScreencast")
     return studio, frames, stopped
 
 
@@ -455,4 +635,38 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
     }
 
 
-__all__ = ["Lesson", "Mark", "Studio", "record"]
+async def rehearse(
+    lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False
+) -> dict[str, Any]:
+    """Run ``lesson`` as ``record`` does, as a rehearsal, and say what it went through.
+
+    Its app starts, and its setup and its steps run on its page in Chromium as a recording's do, but
+    nothing is spoken and no frame is captured, and no wait is longer than ``REHEARSAL_WAIT``: a
+    caption held as long as it takes to read, a pause the lesson asks for, a pause after a click.
+    A scroll is still waited for until it stops, as a recording waits for it. A step the app no
+    longer has stops it as it stops a recording, with the page kept as ``failure.png`` in the
+    lesson's folder in ``out``, and nothing else is written there.
+    """
+
+    folder = out / lesson.slug
+    folder.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{lesson.slug}-", dir=out))
+    began = time.monotonic()
+    async with _staged(lesson, folder, work, chromium, {}, rehearsal=True) as studio:
+        await studio.page.mouse.move(*studio.mouse)
+        await studio.card(lesson.title, 700)
+        studio.started = time.time()
+        await lesson.run(studio)
+        await studio.quiet()
+    if not keep_work:
+        shutil.rmtree(work)
+    return {
+        "rehearsed": lesson.slug,
+        "seconds": round(time.monotonic() - began, 1),
+        "captions": len(studio.captions),
+        "clicks": len(studio.clicks),
+        "chapters": [mark.title for mark in studio.marks],
+    }
+
+
+__all__ = ["Lesson", "Mark", "Studio", "record", "rehearse"]

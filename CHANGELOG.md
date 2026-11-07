@@ -29,6 +29,35 @@ described in `VERSIONING.md`.
   `bundle.path_json` and `bundle.pack` refuse one the import would refuse, with every reason
   (`bundle.ManifestRefused`), and `pageant record` stops on such a page before anything is
   filmed.
+- `pageant rehearse LESSON.py` (`studio.rehearse`): the lesson run through as `record` runs it, its
+  app started and its setup and steps run on its page in Chromium, with nothing spoken, no frame
+  captured and no wait longer than a quarter of a second, so a step the app no longer has is found
+  in a fraction of a recording's time. It stops where `record` would, keeping the page as
+  `failure.png` in the lesson's folder, and writes nothing else there. It takes the record extra,
+  and not ffmpeg. CI's record job rehearses the example before recording it.
+- `s.arrive(url)`: waits for the page a step went to, loaded, with what was on screen drawn on it,
+  so the step after a click that goes to another page does not start on the page before.
+- `tests/test_studio.py` drives the studio in Chromium, and CI's studio job runs it with the
+  record extra installed; elsewhere it is skipped.
+
+### Fixed
+
+- A lesson that goes from page to page keeps what is on screen. The overlay starts afresh in each
+  document a page loads, so after a click on a link, a form post or a server redirect, the next
+  page had no chapter label and no caption, and drew the pointer at the middle of the screen until
+  the mouse next moved, though the captions file had the caption on. The studio now keeps the
+  label, the caption, the title card and where the pointer is, and hands them to each new document
+  in a script that runs as it starts, so its first frame has them; it draws them again as the page
+  loads, for a step that ran meanwhile, and an overlay call a page load cuts off is made again on
+  the page that replaced it. The overlay is built as soon as a page has a body, rather than once
+  it has loaded, and draws no pointer until something places it.
+- A click after a long scroll lands on its target. `glide`, and so `click`, read where the target
+  was 450 ms into its smooth scroll, which Chromium runs for up to 1.5 s, so after a long one the
+  pointer went where the target had been on the way. It now waits, after the same pause, until two
+  reads of the target's box 120 ms apart put its middle in the same place, for three seconds from
+  the scroll's start at most; `spot` waits the same way before drawing the spotlight.
+- A `failure.png` left by an earlier run is removed when a lesson is recorded or rehearsed again,
+  so one in a lesson's folder is from the last run.
 
 ### Changed, from Bailey's `lessons/`
 
