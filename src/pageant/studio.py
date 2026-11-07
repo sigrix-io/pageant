@@ -49,7 +49,7 @@ from typing import Any, Literal
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import FloatRect, Frame, Locator, Page, async_playwright
 
-from pageant import apps, bundle, mixdown, narrate, timeline
+from pageant import apps, bundle, loudness, mixdown, narrate, timeline
 from pageant.apps import App, Running
 
 HERE = Path(__file__).resolve().parent
@@ -67,6 +67,23 @@ SETTLE_CAP = 3.0
 DRAW_ATTEMPTS = 3
 #: In a rehearsal, no wait is longer than this, in seconds.
 REHEARSAL_WAIT = 0.25
+#: The foot of the screen a caption of two lines covers, in CSS pixels.
+CAPTION_BAND = 125
+#: Whether an element is in view already, so a step that points at it does not scroll there: all of
+#: it on screen, and either in a bar that stays put as the page scrolls (fixed, or sticky, which
+#: Chromium scrolls the page under rather than bring it nearer) or above the captions with nothing
+#: over its middle, such as a sticky top bar.
+IN_VIEW = f"""el => {{
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height || r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) {{
+    return false;
+  }}
+  for (let at = el; at; at = at.parentElement) {{
+    if (["fixed", "sticky"].includes(getComputedStyle(at).position)) return true;
+  }}
+  const over = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return r.bottom <= innerHeight - {CAPTION_BAND} && !!over && el.contains(over);
+}}"""
 
 
 @dataclass(frozen=True)
@@ -101,6 +118,16 @@ class Lesson:
     #: Python: a script and its first arguments, such as a stand-in for a service the app calls.
     commands: Mapping[str, Sequence[str | Path]] = field(default_factory=dict)
     mark: Mark | None = None
+    #: Where the chapter label sits: ``top-right``, or ``top-left`` for an app whose controls are on the right.
+    label_corner: Literal["top-right", "top-left"] = "top-right"
+    #: How long the label shows after its chapter starts, in seconds; ``None`` keeps it up until the next one.
+    label_seconds: float | None = None
+    #: Words the voice says differently from how they are written, each respelled in every line it speaks
+    #: (``pronounce.py``): ``{"example.io": "example dot eye oh"}``. The captions keep the written form.
+    pronounce: Mapping[str, str] = field(default_factory=dict)
+    #: The mix's loudness in LUFS (``loudness.py``): -16, what web players expect, or -14, what YouTube
+    #: plays every video at.
+    loudness: float = loudness.WEB
 
     @property
     def slug(self) -> str:
@@ -183,6 +210,8 @@ class Studio:
     _card: Mapping[str, str] | None = field(default=None, init=False, repr=False)
     #: Takes away the script that hands what is on screen to the next document (``_carry``).
     _uncarry: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False)
+    #: Takes the label down ``Lesson.label_seconds`` after its chapter started (``_label_after``).
+    _label_down: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _carrying: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _drawing: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
 
@@ -204,7 +233,13 @@ class Studio:
         """What is on screen, as ``overlay.js`` draws it: the label, the caption, the card, and the pointer."""
 
         card = None if self._card is None else dict(self._card)
-        return {"label": self.label, "caption": self._caption, "card": card, "at": list(self.mouse)}
+        return {
+            "label": self.label,
+            "corner": self.lesson.label_corner,
+            "caption": self._caption,
+            "card": card,
+            "at": list(self.mouse),
+        }
 
     async def _on_page(self, expression: str, arg: Callable[[], Any] = lambda: None) -> None:
         """Evaluate ``expression`` with ``arg()`` on the page as it is now.
@@ -278,12 +313,35 @@ class Studio:
         await self.sleep(hold_ms)
 
     async def chapter(self, title: str | None) -> None:
-        """The label on screen, and a chapter of the video from here on."""
+        """The label on screen, and a chapter of the video from here on.
+
+        With ``Lesson.label_seconds``, the label comes down that long after, on whatever page the
+        lesson is on by then, unless the next chapter has started.
+        """
 
         if title:
             self.marks.append(timeline.Mark(self.clock(), title))
         self.label = title
         await self._show()
+        if self._label_down is not None:
+            self._label_down.cancel()
+            self._label_down = None
+        if title and self.lesson.label_seconds:
+            self._label_down = asyncio.ensure_future(self._label_after(title, self.lesson.label_seconds))
+
+    async def _label_after(self, title: str, seconds: float) -> None:
+        """Take the label ``title`` down after ``seconds``, from this page and every page after.
+
+        In real seconds, in a rehearsal too: no step waits for it.
+        """
+
+        await asyncio.sleep(seconds)
+        if self.label != title:
+            return
+        self.label = None
+        # As for a page drawn as it loads: a page that cannot be drawn on fails the next step that draws.
+        with contextlib.suppress(PlaywrightError):
+            await self._show()
 
     async def _voice_free(self) -> None:
         """Never two voices at once: a line waits for the one before it, and a breath after."""
@@ -340,15 +398,19 @@ class Studio:
         await self._show()
 
     async def _scroll_to(self, locator: Locator, pause_ms: float) -> FloatRect | None:
-        """Scroll smoothly until ``locator`` is in the middle of the page; its box once it is still.
+        """Scroll smoothly until ``locator`` is in the middle of the page, unless it is in view
+        already (``IN_VIEW``); its box once it is still.
 
         A smooth scroll takes longer the further it goes, so once ``pause_ms`` has passed, its box
         is read every ``SETTLE_POLL`` until two reads in a row agree, and at most until
         ``SETTLE_CAP`` after the scroll began: a short scroll is over by the pause, and the pointer
-        goes to where a long one ends, not to where the element was on its way there.
+        goes to where a long one ends, not to where the element was on its way there. An element in
+        view is not scrolled to: the page would move under the pointer for nothing, and a control
+        in a sticky top bar would scroll the page under the bar.
         """
 
-        await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
+        if not await locator.evaluate(IN_VIEW):
+            await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
         until = time.monotonic() + SETTLE_CAP
         await self.sleep(pause_ms - SETTLE_POLL * 1000)
         box = await locator.bounding_box()
@@ -451,6 +513,17 @@ class Studio:
                 await self.page.keyboard.press("Shift+Enter")
             await locator.press_sequentially(line, delay=delay_ms)
 
+    async def paste(self, locator: Locator, text: str) -> None:
+        """Put ``text`` in at once, as a paste does: for words too long to watch being typed.
+
+        The page hears it as typing (an ``input`` event), so a form that saves or counts as you type
+        does so; a new line is a new line, in a box that keeps one.
+        """
+
+        await locator.focus()
+        await self.page.keyboard.insert_text(text)
+        await self.sleep(300)
+
 
 @contextlib.asynccontextmanager
 async def _staged(
@@ -510,6 +583,10 @@ async def _staged(
                     await page.screenshot(path=failure)
                 raise
             finally:
+                if studio._label_down is not None:
+                    # A label still to come down when the lesson ends comes down with the page.
+                    studio._label_down.cancel()
+                    await asyncio.gather(studio._label_down, return_exceptions=True)
                 await studio._drawn()
                 await context.close()
                 await browser.close()
@@ -524,7 +601,7 @@ async def _capture(
     """Record the lesson's frames into its folder ``out``; the studio's log of it, each frame with when it
     was painted, and when it stopped."""
 
-    clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice)) if lesson.narration else {}
+    clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice), lesson.pronounce) if lesson.narration else {}
     frames_folder = work / "frames"
     frames_folder.mkdir()
     frames: list[tuple[Path, float]] = []
@@ -594,7 +671,7 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
     )
     if lesson.narration:
         voice = [(at - offset, file) for at, file in studio.spoken]
-        mixdown.mix(voice, [at - offset for at in studio.clicks], seconds, picture, mp4, work)
+        mixdown.mix(voice, [at - offset for at in studio.clicks], seconds, picture, mp4, work, lesson.loudness)
 
     captions = [
         timeline.Cue(

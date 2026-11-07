@@ -18,12 +18,18 @@
   if (window.__demo) return;
   const ui = {};
   // What is on screen: what each call below changes, and what is drawn from.
-  const shown = { label: null, caption: null, card: null, pointer: true, at: null };
+  const shown = { label: null, corner: "top-right", caption: null, card: null, pointer: true, at: null };
   let target = null, pad = 8, drawnHere = false, movedHere = false;
+  // Where the chapter label may sit: a top corner, clear of the captions at the foot of the screen.
+  const CORNERS = {
+    "top-right": { right: "18px", left: "auto" },
+    "top-left": { left: "18px", right: "auto" },
+  };
   const css = (el, style) => (Object.assign(el.style, style), el);
   const make = (tag, style) => css(document.createElement(tag), style || {});
   const draw = {
     label() {
+      css(ui.chip, CORNERS[shown.corner] || CORNERS["top-right"]);
       ui.chip.textContent = shown.label || "";
       ui.chip.style.opacity = shown.label ? "1" : "0";
     },
@@ -132,15 +138,19 @@
   }, true);
   window.__demo = {
     ready: ensure,
-    // What is on screen, as the studio keeps it: { label, caption, card, at }. On a page the studio
-    // has not drawn yet, all of it is drawn at once; on one it has, only what changed is drawn, as
-    // the calls below draw it. The pointer is put at `at` until the page sees it move.
+    // What is on screen, as the studio keeps it: { label, corner, caption, card, at }. On a page the
+    // studio has not drawn yet, all of it is drawn at once; on one it has, only what changed is
+    // drawn, as the calls below draw it. The pointer is put at `at` until the page sees it move.
     show(screen) {
       const first = !drawnHere;
       drawnHere = true;
       const changed = ["label", "caption", "card"].filter((part) =>
         JSON.stringify(shown[part]) !== JSON.stringify(screen[part] || null));
       for (const part of changed) shown[part] = screen[part] || null;
+      if (screen.corner && screen.corner !== shown.corner) {
+        shown.corner = screen.corner;
+        if (!changed.includes("label")) changed.push("label");
+      }
       if (!movedHere && screen.at) shown.at = screen.at;
       if (!ensure()) return;
       const change = () => { for (const part of changed) draw[part](); draw.pointer(); };
@@ -152,7 +162,18 @@
     pointer(on) { set("pointer", !!on); },
     spot(el, padding) {
       ensure();
-      target = el; pad = padding == null ? 8 : padding;
+      pad = padding == null ? 8 : padding;
+      if (ui.spot && el && ui.spot.style.opacity !== "1") {
+        // Down, it comes up where the element is, rather than sliding there from where it last was
+        // (on a page just opened, the screen's corner).
+        const r = el.getBoundingClientRect(), moves = ui.spot.style.transition;
+        ui.spot.style.transition = "none";
+        css(ui.spot, { left: r.left - pad + "px", top: r.top - pad + "px", width: r.width + 2 * pad + "px",
+          height: r.height + 2 * pad + "px" });
+        void ui.spot.offsetWidth;
+        ui.spot.style.transition = moves;
+      }
+      target = el;
       if (ui.spot) ui.spot.style.opacity = el ? "1" : "0";
     },
   };
