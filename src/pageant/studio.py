@@ -67,6 +67,8 @@ SETTLE_CAP = 3.0
 DRAW_ATTEMPTS = 3
 #: In a rehearsal, no wait is longer than this, in seconds.
 REHEARSAL_WAIT = 0.25
+#: How long the spotlight takes to fade out, in seconds (``overlay.js``).
+SPOT_FADE = 0.35
 #: The foot of the screen a caption of two lines covers, in CSS pixels.
 CAPTION_BAND = 125
 #: Whether an element is in view already, so a step that points at it does not scroll there: all of
@@ -421,11 +423,18 @@ class Studio:
                 return box
 
     async def spot(self, locator: Locator | None, padding: float = 8) -> None:
-        """Dim the page around ``locator``, scrolled into view; ``None`` lifts the spotlight."""
+        """Dim the page around ``locator``, scrolled into view; ``None`` lifts the spotlight.
+
+        A spotlight already up on another element is taken down before the page scrolls to one out
+        of view, rather than trailing its element off the screen and sliding across to the new one;
+        the new one comes up where it lands.
+        """
 
         if locator is None:
             await self._on_page("() => window.__demo.spot(null)")
             return
+        if not await locator.evaluate(IN_VIEW) and await self.page.evaluate("() => window.__demo.spot(null)"):
+            await self.sleep(SPOT_FADE * 1000)
         await self._scroll_to(locator, 550)
         await locator.evaluate("(el, padding) => window.__demo.spot(el, padding)", padding)
         await self.sleep(450)

@@ -7,9 +7,10 @@ the pointer drawn at the middle of the screen; and ``glide`` read where its targ
 smooth scroll, which a long one is still in, so the click went where the target had been. These
 hold that neither happens, by running lessons through ``studio.rehearse``, the studio ``record``
 uses with nothing spoken or filmed, against a small app of their own. They also hold the chapter
-label to its corner and its seconds on every page, the spotlight to coming up where its element
-is, a step to scrolling only to what is not in view (a control in a sticky top bar is, and Chromium
-would scroll the page under the bar for it), and a paste to one input.
+label to its corner and its seconds on every page, the spotlight to coming up where its element is
+and to being down while the page scrolls to the next, a step to scrolling only to what is not in
+view (a control in a sticky top bar is, and Chromium would scroll the page under the bar for it),
+and a paste to one input.
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
@@ -675,3 +676,37 @@ def test_paste_puts_the_text_in_at_once_and_keeps_its_new_lines(tmp_path: Path, 
 
     assert seen["one line"] == (line, 1), "one input, where typing it is one a key"
     assert seen["two lines"] == lines
+
+
+def test_a_spotlight_moving_to_an_element_out_of_view_is_down_while_the_page_scrolls_there(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    # On every scroll event, whether the spotlight is up or on its way down.
+    watch = """() => {
+      const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+      window.spotWhileScrolling = [];
+      addEventListener("scroll", () => window.spotWhileScrolling.push(root.children[0].style.opacity));
+    }"""
+    landed = """() => {
+      const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+      const spot = root.children[0], box = document.querySelector("#line").getBoundingClientRect();
+      return { up: spot.style.opacity, left: parseFloat(getComputedStyle(spot).left) - (box.left - 8),
+        top: parseFloat(getComputedStyle(spot).top) - (box.top - 8) };
+    }"""
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        await s.spot(s.page.locator("#cart"))
+        await s.page.evaluate(watch)
+        await s.spot(s.page.locator("#line"))
+        seen["while scrolling"] = set(await s.page.evaluate("window.spotWhileScrolling"))
+        seen["landed"] = await s.page.evaluate(landed)
+
+    _rehearse(tmp_path, run, chromium)
+
+    assert seen["while scrolling"] == {"0"}, "down before the page moved, not trailing the cart"
+    assert seen["landed"] == {"up": "1", "left": pytest.approx(0, abs=1), "top": pytest.approx(0, abs=1)}

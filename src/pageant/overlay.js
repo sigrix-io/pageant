@@ -160,8 +160,10 @@
     chapter(text) { set("label", text || null); },
     card(spec) { set("card", spec || null); },
     pointer(on) { set("pointer", !!on); },
+    // The spotlight on el, or taken down for null; whether one was up before.
     spot(el, padding) {
       ensure();
+      const was = !!ui.spot && ui.spot.style.opacity === "1";
       pad = padding == null ? 8 : padding;
       if (ui.spot && el && ui.spot.style.opacity !== "1") {
         // Down, it comes up where the element is, rather than sliding there from where it last was
@@ -175,6 +177,7 @@
       }
       target = el;
       if (ui.spot) ui.spot.style.opacity = el ? "1" : "0";
+      return was;
     },
   };
   if (!ensure()) {

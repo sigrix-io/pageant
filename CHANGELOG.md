@@ -72,7 +72,8 @@ described in `VERSIONING.md`.
 - The mix is set to its loudness in two passes (`pageant.loudness`): one pass of `loudnorm` left
   a lesson mixed for -16 LUFS at -16.6 LUFS, measured.
 - The spotlight comes up where its element is, rather than sliding there from where it last was:
-  on a page just opened, from the screen's corner.
+  on a page just opened, from the screen's corner. Moving to an element out of view, it is taken
+  down before the page scrolls there, rather than trailing the last element off the screen.
 - `spot` and `glide` do not scroll to an element in view: all of it on screen, and either in a
   bar that stays put as the page scrolls or clear of the captions with nothing over it. Chromium
   scrolls the page under a sticky top bar to bring a control in it nearer, so pointing at an
