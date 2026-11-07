@@ -1,6 +1,15 @@
 // Drawn over the app's page while a lesson records: a cursor, a spotlight, captions, a chapter
 // label and title cards. Loaded with context.add_init_script, so it is in place before the page's
-// own scripts run; studio.py drives it through window.__demo.
+// own scripts run, in every document the page loads; studio.py drives it through window.__demo.
+//
+// Each document starts with nothing on screen: a click that goes to another page (a link, a form
+// post, a server redirect) leaves this one behind with everything it drew. So the studio keeps
+// what is on screen (the chapter label, the caption, the title card and where the pointer is) and
+// hands it to each page with show(), once from a script of its own that runs as the next document
+// starts and again as it loads: a page it has not drawn yet gets all of it at once, without the
+// fades, so the page changes under them; a page it has drawn gets what changed, with them. The
+// pointer is not drawn until something places it, and it is all built as soon as the page has a
+// body, so the first frame of the new page has it.
 //
 // Built with the CSSOM only (element.style), never a <style> element or a style="" attribute, so
 // an app's own CSP (style-src 'self') stays on and the page renders as a person sees it. The title
@@ -8,9 +17,47 @@
 (() => {
   if (window.__demo) return;
   const ui = {};
-  let target = null, pad = 8;
+  // What is on screen: what each call below changes, and what is drawn from.
+  const shown = { label: null, caption: null, card: null, pointer: true, at: null };
+  let target = null, pad = 8, drawnHere = false, movedHere = false;
   const css = (el, style) => (Object.assign(el.style, style), el);
   const make = (tag, style) => css(document.createElement(tag), style || {});
+  const draw = {
+    label() {
+      ui.chip.textContent = shown.label || "";
+      ui.chip.style.opacity = shown.label ? "1" : "0";
+    },
+    caption() {
+      if (!shown.caption) { css(ui.cap, { opacity: "0", transform: "translate(-50%, 14px)" }); return; }
+      ui.cap.textContent = shown.caption;
+      css(ui.cap, { opacity: "1", transform: "translate(-50%, 0)" });
+    },
+    card() {
+      const spec = shown.card;
+      if (spec) {
+        if (spec.mark) { ui.logo.src = spec.mark; ui.logo.style.display = ""; } else { ui.logo.style.display = "none"; }
+        ui.kicker.textContent = spec.kicker || "";
+        ui.title.textContent = spec.title || "";
+        ui.sub.textContent = spec.sub || "";
+      }
+      ui.card.style.opacity = spec ? "1" : "0";
+      draw.pointer();
+    },
+    pointer() {
+      css(ui.cursor, { display: shown.pointer ? "" : "none", opacity: shown.card ? "0" : "1",
+        visibility: shown.at ? "visible" : "hidden" });
+      if (shown.at) ui.cursor.style.transform = "translate(" + (shown.at[0] - 4) + "px," + (shown.at[1] - 2) + "px)";
+    },
+  };
+  // A change drawn at once: what fades in or out is styled once with no transition, then given it back.
+  function instantly(change) {
+    const fading = [ui.cap, ui.chip, ui.card];
+    const fades = fading.map((el) => el.style.transition);
+    for (const el of fading) el.style.transition = "none";
+    change();
+    void ui.root.offsetHeight;
+    fading.forEach((el, index) => { el.style.transition = fades[index]; });
+  }
   function ensure() {
     if (ui.root) return true;
     if (!document.body) return false;
@@ -32,8 +79,7 @@
     ui.cursor.setAttribute("width", "30");
     ui.cursor.setAttribute("height", "30");
     ui.cursor.setAttribute("viewBox", "0 0 28 28");
-    css(ui.cursor, { position: "fixed", left: "0", top: "0", transform: "translate(640px,360px)",
-      filter: "drop-shadow(0 2px 3px rgba(0,0,0,.45))" });
+    css(ui.cursor, { position: "fixed", left: "0", top: "0", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.45))" });
     const arrow = document.createElementNS(NS, "path");
     arrow.setAttribute("d", "M4 2 L4 22 L9.5 17 L13 25 L16.5 23.5 L13 15.7 L20.5 15.7 Z");
     arrow.setAttribute("fill", "#14161f");
@@ -52,16 +98,12 @@
     ui.title = make("div", { font: "700 54px/1.1 Inter, system-ui, sans-serif", letterSpacing: "-0.02em", maxWidth: "1000px" });
     ui.sub = make("div", { font: "400 24px/1.45 Inter, system-ui, sans-serif", color: "#c9cee0", maxWidth: "900px" });
     ui.card.append(ui.logo, ui.kicker, ui.title, ui.sub);
+    // Drawn before it is on the page, so what the page already had shows at once, with no fade.
+    draw.label();
+    draw.caption();
+    draw.card();
     ui.root.append(ui.spot, ui.ripple, ui.cap, ui.chip, ui.card, ui.cursor);
     document.documentElement.append(ui.root);
-    window.addEventListener("mousemove", (e) => {
-      ui.cursor.style.transform = "translate(" + (e.clientX - 4) + "px," + (e.clientY - 2) + "px)";
-    }, true);
-    window.addEventListener("mousedown", (e) => {
-      css(ui.ripple, { left: e.clientX + "px", top: e.clientY + "px" });
-      ui.ripple.animate([{ opacity: 0.95, transform: "scale(.35)" }, { opacity: 0, transform: "scale(1.5)" }],
-        { duration: 520, easing: "ease-out" });
-    }, true);
     const follow = () => {
       if (target) {
         const r = target.getBoundingClientRect();
@@ -73,38 +115,50 @@
     requestAnimationFrame(follow);
     return true;
   }
+  const set = (part, value) => {
+    shown[part] = value;
+    if (ensure()) draw[part]();
+  };
+  window.addEventListener("mousemove", (e) => {
+    movedHere = true;
+    shown.at = [e.clientX, e.clientY];
+    if (ui.root) draw.pointer();
+  }, true);
+  window.addEventListener("mousedown", (e) => {
+    if (!ui.root) return;
+    css(ui.ripple, { left: e.clientX + "px", top: e.clientY + "px" });
+    ui.ripple.animate([{ opacity: 0.95, transform: "scale(.35)" }, { opacity: 0, transform: "scale(1.5)" }],
+      { duration: 520, easing: "ease-out" });
+  }, true);
   window.__demo = {
     ready: ensure,
-    caption(text) {
-      ensure();
-      if (!text) { css(ui.cap, { opacity: "0", transform: "translate(-50%, 14px)" }); return; }
-      ui.cap.textContent = text;
-      css(ui.cap, { opacity: "1", transform: "translate(-50%, 0)" });
+    // What is on screen, as the studio keeps it: { label, caption, card, at }. On a page the studio
+    // has not drawn yet, all of it is drawn at once; on one it has, only what changed is drawn, as
+    // the calls below draw it. The pointer is put at `at` until the page sees it move.
+    show(screen) {
+      const first = !drawnHere;
+      drawnHere = true;
+      const changed = ["label", "caption", "card"].filter((part) =>
+        JSON.stringify(shown[part]) !== JSON.stringify(screen[part] || null));
+      for (const part of changed) shown[part] = screen[part] || null;
+      if (!movedHere && screen.at) shown.at = screen.at;
+      if (!ensure()) return;
+      const change = () => { for (const part of changed) draw[part](); draw.pointer(); };
+      if (first) instantly(change); else change();
     },
-    chapter(text) {
-      ensure();
-      ui.chip.textContent = text || "";
-      ui.chip.style.opacity = text ? "1" : "0";
-    },
+    caption(text) { set("caption", text || null); },
+    chapter(text) { set("label", text || null); },
+    card(spec) { set("card", spec || null); },
+    pointer(on) { set("pointer", !!on); },
     spot(el, padding) {
       ensure();
       target = el; pad = padding == null ? 8 : padding;
-      ui.spot.style.opacity = el ? "1" : "0";
-    },
-    pointer(shown) {
-      ensure();
-      ui.cursor.style.display = shown ? "" : "none";
-    },
-    card(spec) {
-      ensure();
-      if (!spec) { ui.card.style.opacity = "0"; ui.cursor.style.opacity = "1"; return; }
-      if (spec.mark) { ui.logo.src = spec.mark; ui.logo.style.display = ""; } else { ui.logo.style.display = "none"; }
-      ui.kicker.textContent = spec.kicker || "";
-      ui.title.textContent = spec.title || "";
-      ui.sub.textContent = spec.sub || "";
-      ui.card.style.opacity = "1";
-      ui.cursor.style.opacity = "0";
+      if (ui.spot) ui.spot.style.opacity = el ? "1" : "0";
     },
   };
-  document.addEventListener("DOMContentLoaded", ensure);
+  if (!ensure()) {
+    const watch = new MutationObserver(() => { if (ensure()) watch.disconnect(); });
+    watch.observe(document, { childList: true, subtree: true });
+    document.addEventListener("DOMContentLoaded", () => { ensure(); watch.disconnect(); });
+  }
 })();

@@ -59,6 +59,24 @@ jobs:
       - name: The example lesson, as a copy of it is checked
         run: python -m mypy --no-namespace-packages src/pageant/example/pages.py src/pageant/example/lesson.py
 
+  # The tests with the record extra installed and a Chromium to drive, which the test job has
+  # neither of: tests/test_studio.py runs the studio's steps in Chromium (a lesson that goes from
+  # page to page, a click after a long scroll, a rehearsal), and may not be skipped here.
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,record]"
+      - run: python -m playwright install --with-deps chromium
+      - name: Test, the studio's tests with them
+        env:
+          PAGEANT_STUDIO_TESTS: required
+        run: python -m pytest -q
+
   # The example lesson, recorded end to end from the wheel installed with its record extra
   # in a fresh environment, as a person installs it: Playwright's own Chromium, the voice
   # fetched from its release and checked, and ffmpeg. Run from outside the checkout, so
@@ -86,10 +104,11 @@ jobs:
         with:
           path: ~/.cache/pageant/kokoro
           key: kokoro-${{ hashFiles('src/pageant/narrate.py') }}
-      - name: Record the example lesson
+      - name: Rehearse the example lesson, then record it
         working-directory: ${{ runner.temp }}
         run: |
           fresh/bin/pageant example notebook
+          fresh/bin/pageant rehearse notebook/lesson.py
           fresh/bin/pageant record notebook/lesson.py
       - name: What it wrote is a bundle, a pack and an upload
         working-directory: ${{ runner.temp }}
@@ -118,7 +137,7 @@ jobs:
   # operating system above does not mean editing the branch ruleset to match.
   ci-passed:
     if: always()
-    needs: [test, types, record]
+    needs: [test, types, studio, record]
     runs-on: ubuntu-latest
     steps:
       - name: Every job succeeded

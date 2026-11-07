@@ -120,17 +120,49 @@ A lesson's steps call the studio, `s`:
 | `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
 | `s.quiet()` | takes the caption down |
-| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, scrolled into view |
-| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, and clicks, with a sound |
+| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped |
+| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, once the page has stopped scrolling to it, and clicks, with a sound |
+| `s.arrive(url)` | waits for the page a step went to, loaded: `url` is its address, a glob such as `"**/checkout/done"`, a regular expression, or a function of the address |
 | `s.type(locator, text)` | types as a person does |
 | `s.terminal(title, where)` | leaves the page for a terminal |
 | `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
 | `s.sleep(ms)` | waits |
 | `s.page` | the Playwright page itself, for anything else |
 
+A step that goes to another page (a link, a form post, a server redirect such as a checkout's)
+loads a new document, and the overlay starts afresh in each one. So the studio keeps the chapter
+label, the caption, the title card and where the pointer is, and hands them to every page the
+lesson goes to as that page starts, so its first frame has them; what a step changes while the
+page loads is drawn on it too. `s.arrive(url)` is for the step after such a click, so that it does
+not start on the page before, as it could with a button both pages have:
+
+```python
+await s.click(s.page.get_by_role("button", name="Pay"))
+await s.arrive("**/checkout/done")
+await s.say("paid")
+```
+
+Before the pointer moves to an element, the studio scrolls it to the middle of the page and waits
+for the scroll to stop, until two reads of the element's box 120 ms apart agree, since a long
+smooth scroll is still moving after a short one is over. It waits three seconds from the scroll's
+start at most, for an element that never holds still.
+
 The video's chapters follow YouTube's rules, since a video that breaks them shows none: the first
 starts at 0:00 whenever the lesson marked it, and a chapter shorter than ten seconds runs on into
 the one before it.
+
+### Rehearsing
+
+```bash
+pageant rehearse notebook/lesson.py
+```
+
+runs a lesson through as `pageant record` does, on the same page in the same Chromium, with
+nothing spoken, no frame captured and no wait longer than a quarter of a second: the time a
+caption is held, a pause the lesson asks for, a pause after a click. A scroll is still waited for
+until it stops. A step the app no longer has stops it as it stops a recording, with the page kept
+as `failure.png` in the lesson's folder, and nothing else is written there. It takes the `record`
+extra, but not ffmpeg, and runs in a fraction of a recording's time.
 
 ## Starting the product: the start hook
 
@@ -220,6 +252,7 @@ scripted: its page is the one it films, and its command really runs.
 | Command | What it does |
 | --- | --- |
 | `pageant record LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | records the lesson the file names as `LESSON` into `out/` beside it; `--chromium` (or `PAGEANT_CHROMIUM`) drives a Chromium already installed, and `--keep-work` keeps the frames, the audio and the app's work folder |
+| `pageant rehearse LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | runs the lesson through as `record` would, with nothing spoken or filmed and its long waits cut short, and stops where `record` would, keeping the page as `failure.png` in its folder in `out/`; `--keep-work` keeps the app's work folder |
 | `pageant pack PAGES.py [--out DIR] [--zip FILE]` | zips the recorded lessons of `PATH`, as `out/lessons.zip` unless `--zip` names another |
 | `pageant youtube-text PAGES.py [--out DIR] [--link SLUG=URL ...]` | writes each recorded lesson's `youtube.txt` from `PATH` and `PRODUCT` |
 | `pageant example FOLDER` | writes the example lesson into a new folder, to record and change |
@@ -240,9 +273,13 @@ pip install -e ".[dev,record]"
 ruff check . && ruff format --check . && mypy && pytest
 ```
 
-The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows; CI's record
-job films the example lesson from a fresh install of the wheel, on Linux, and keeps the video as
-an artifact of the run. `tests/test_boundary.py` fails if the engine names a product it films, and
+The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows, except
+`tests/test_studio.py`, which drives the studio in Chromium: a lesson that goes from page to page,
+a click after a long scroll, a rehearsal. It is skipped without the `record` extra and a Chromium
+(`playwright install chromium`, or one `PAGEANT_CHROMIUM` names), and CI's studio job runs it,
+where `PAGEANT_STUDIO_TESTS=required` fails a skip. CI's record job rehearses and films the
+example lesson from a fresh install of the wheel, on Linux, and keeps the video as an artifact of
+the run. `tests/test_boundary.py` fails if the engine names a product it films, and
 `tests/test_schemas.py` holds the schemas and their case tables to Pageant's checker, to a
 reference implementation of JSON Schema, to the writer and to `SPEC.md`.
 

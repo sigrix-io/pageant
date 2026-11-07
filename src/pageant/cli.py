@@ -1,20 +1,22 @@
-"""The ``pageant`` command: record a lesson, pack a path's lessons, and write their YouTube uploads.
+"""The ``pageant`` command: record a lesson or rehearse it, pack a path's lessons, and write their YouTube uploads.
 
     pageant example notebook                 # a lesson to start from, written into notebook/
+    pageant rehearse notebook/lesson.py      # its steps run through quickly, nothing spoken or filmed
     pageant record notebook/lesson.py        # the lesson the file names as LESSON, into notebook/out/
     pageant pack notebook/pages.py           # the path the file names as PATH, as notebook/out/lessons.zip
     pageant youtube-text notebook/pages.py   # each lesson's youtube.txt, from PATH and PRODUCT
 
 A lesson file and a pages file are Python, loaded as running them would load them: their own
 folder first on the import path, so a lesson imports the pages beside it. The recordings go into
-``out/`` beside the file unless ``--out`` names another folder. Recording takes the ``record``
-extra, which nothing here imports until ``record`` runs.
+``out/`` beside the file unless ``--out`` names another folder. Recording and rehearsing take the
+``record`` extra, which nothing here imports until one of them runs.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import importlib.util
 import json
 import os
@@ -23,9 +25,12 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import ModuleType
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pageant import __version__, bundle, youtube
+
+if TYPE_CHECKING:
+    from pageant.studio import Lesson
 
 #: The lesson the package ships: a lesson file, its pages, and the static site it films.
 EXAMPLE = Path(__file__).resolve().parent / "example"
@@ -71,27 +76,57 @@ def _out(args: argparse.Namespace, file: Path) -> Path:
     return out if out is not None else file.resolve().parent / "out"
 
 
-def _not_here(needs: Sequence[str]) -> Refused:
-    return Refused("Recording takes what is not here:\n" + "\n".join(f"- {need}" for need in needs))
+def _takes(doing: str, *, ffmpeg: bool) -> None:
+    """Refuse, naming each, what ``doing`` takes that is not here: the record extra, and ffmpeg if it encodes.
 
+    Asked before the lesson is loaded, since a lesson file imports the studio.
+    """
 
-def _record(args: argparse.Namespace) -> int:
-    # Both are asked for before the lesson is loaded, since a lesson file imports the studio.
-    needs = [] if shutil.which("ffmpeg") else ["ffmpeg on the PATH, which encodes the video and mixes its sound"]
+    needs = []
+    if ffmpeg and not shutil.which("ffmpeg"):
+        needs.append("ffmpeg on the PATH, which encodes the video and mixes its sound")
     try:
-        from pageant import studio
+        importlib.import_module("pageant.studio")
     except ModuleNotFoundError as missing:
         package = (missing.name or "").split(".")[0]
-        raise _not_here([f"the record extra, which installs {package}: {RECORD_EXTRA}", *needs]) from None
+        needs.insert(0, f"the record extra, which installs {package}: {RECORD_EXTRA}")
     if needs:
-        raise _not_here(needs)
-    lesson = _named(load(args.lesson), args.lesson, "LESSON", studio.Lesson)
+        raise Refused(f"{doing} takes what is not here:\n" + "\n".join(f"- {need}" for need in needs))
+
+
+def _lesson(file: Path) -> Lesson:
+    """The lesson ``file`` names as ``LESSON``, whose page an import takes."""
+
+    from pageant import studio
+
+    lesson = _named(load(file), file, "LESSON", studio.Lesson)
     # The page is written once the lesson is filmed; one the import would refuse stops it first.
     try:
         bundle.page_json(lesson.page)
     except bundle.ManifestRefused as refused:
         raise Refused(str(refused)) from None
+    return lesson
+
+
+def _record(args: argparse.Namespace) -> int:
+    _takes("Recording", ffmpeg=True)
+    from pageant import studio
+
+    lesson = _lesson(args.lesson)
     made = asyncio.run(studio.record(lesson, _out(args, args.lesson), chromium=args.chromium, keep_work=args.keep_work))
+    sys.stdout.write(json.dumps(made, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+def _rehearse(args: argparse.Namespace) -> int:
+    # Nothing is encoded, so ffmpeg is not asked for.
+    _takes("Rehearsing", ffmpeg=False)
+    from pageant import studio
+
+    lesson = _lesson(args.lesson)
+    made = asyncio.run(
+        studio.rehearse(lesson, _out(args, args.lesson), chromium=args.chromium, keep_work=args.keep_work)
+    )
     sys.stdout.write(json.dumps(made, indent=2, ensure_ascii=False) + "\n")
     return 0
 
@@ -154,6 +189,24 @@ def _parser() -> argparse.ArgumentParser:
     )
     record.add_argument("--keep-work", action="store_true", help="keep the frames, the audio and the app's work folder")
     record.set_defaults(run=_record)
+
+    rehearse = commands.add_parser(
+        "rehearse",
+        help="run the lesson a lesson file names as LESSON through, quickly, with nothing spoken or filmed",
+    )
+    rehearse.add_argument("lesson", type=Path, help="the lesson file")
+    rehearse.add_argument(
+        "--out",
+        type=Path,
+        help="where a page a step stopped on is kept, as failure.png (default: out/ beside the file)",
+    )
+    rehearse.add_argument(
+        "--chromium",
+        default=os.environ.get("PAGEANT_CHROMIUM"),
+        help="a Chromium to drive instead of Playwright's own (or PAGEANT_CHROMIUM)",
+    )
+    rehearse.add_argument("--keep-work", action="store_true", help="keep the app's work folder")
+    rehearse.set_defaults(run=_rehearse)
 
     pack = commands.add_parser("pack", help="zip the recorded lessons of the path a pages file names as PATH")
     pack.add_argument("pages", type=Path, help="the pages file")
