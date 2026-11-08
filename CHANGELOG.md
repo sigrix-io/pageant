@@ -88,6 +88,9 @@ described in `VERSIONING.md`.
 - The spotlight comes up where its element is, rather than sliding there from where it last was:
   on a page just opened, from the screen's corner. Moving to an element out of view, it is taken
   down before the page scrolls there, rather than trailing the last element off the screen.
+- A step that fails keeps its page as `failure.png` at the video's own 1920x1080, painted by the
+  film, and on a page with nothing moving too: Chromium's own screenshot, which it used, waits for a
+  frame with something new in it, which a still page under the film never paints.
 - `spot` and `glide` do not scroll to an element in view: all of it on screen, and either in a
   bar that stays put as the page scrolls or clear of the captions with nothing over it. Chromium
   scrolls the page under a sticky top bar to bring a control in it nearer, so pointing at an

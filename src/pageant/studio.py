@@ -726,9 +726,12 @@ async def _staged(
                     studio.spoken_only.clear()
                 yield studio
             except Exception:
-                # A screenshot rides on a frame, so it waits for the film, which may have stopped.
+                # The page as the step that failed left it, painted by the film (Chromium's own screenshot
+                # can wait for ever on a page with nothing moving), unless the film has stopped too.
                 with contextlib.suppress(Exception):
-                    await page.screenshot(path=failure, timeout=10_000)
+                    picture = await asyncio.wait_for(film.picture(), 30)
+                    if picture:
+                        failure.write_bytes(picture)
                 raise
             finally:
                 if studio._label_down is not None:

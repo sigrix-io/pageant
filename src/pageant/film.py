@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -47,6 +48,19 @@ REPAINTS = 4
 TAKEN = 0.03
 #: A frame's pixels: the screen at the device scale the browser paints it at.
 FRAME_WIDTH, FRAME_HEIGHT = 1920, 1080
+#: A pixel's colour changed where no one can see it, so the next frame has something new to paint and so
+#: a picture to give: Chromium gives none of a frame in which nothing changed.
+NUDGE = """(() => {
+  let dot = document.getElementById("__pageant_nudge");
+  if (!dot) {
+    dot = document.createElement("div");
+    dot.id = "__pageant_nudge";
+    Object.assign(dot.style, { position: "fixed", left: "0", top: "0", width: "1px", height: "1px",
+      pointerEvents: "none", zIndex: "2147483647" });
+    (document.body || document.documentElement).append(dot);
+  }
+  dot.style.background = dot.style.background === "rgba(0, 0, 0, 0.01)" ? "rgba(0, 0, 0, 0.02)" : "rgba(0, 0, 0, 0.01)";
+})()"""
 #: How many of the frame's pixels a zoomed frame's screenshot is taken larger than the frame, right and below.
 SPARE = 3
 #: What the encoder keeps of each frame: its top-left FRAME_WIDTH x FRAME_HEIGHT (``crop``'s filter).
@@ -92,6 +106,9 @@ class Film:
     _failure: BaseException | None = field(default=None, init=False, repr=False)
     #: The last picture Chromium gave of the whole screen, and the last one kept.
     _latest: bytes = field(default=b"", init=False, repr=False)
+    #: A picture of the screen asked for (``picture``), and the one the next frame gave.
+    _asked: bool = field(default=False, init=False, repr=False)
+    _picture: bytes = field(default=b"", init=False, repr=False)
     _kept: bytes = field(default=b"", init=False, repr=False)
 
     def clock(self) -> float:
@@ -184,7 +201,10 @@ class Film:
             await self.before(self.hooked)
         begin: dict[str, Any] = {"frameTimeTicks": self._base + (self.count + 1) * 1000 / FPS, "interval": 1000 / FPS}
         shooting = self.folder is not None
-        if shooting:
+        asked = self._asked
+        if asked:
+            begin["screenshot"] = {"format": "png"}
+        elif shooting:
             begin["screenshot"] = {"format": "jpeg", "quality": QUALITY}
         clipped: bytes | None = None
         if shooting and self.rolling and self.clip is not None:
@@ -228,13 +248,34 @@ class Film:
         else:
             await self._advance()
             painted = await self._begin(begin)
-        if painted.get("screenshotData"):
+        if painted.get("screenshotData") and asked:
+            self._picture, self._asked = base64.b64decode(painted["screenshotData"]), False
+        elif painted.get("screenshotData"):
             self._latest = base64.b64decode(painted["screenshotData"])
         self.count += 1
         if shooting and self.rolling:
             self._keep(clipped if clipped is not None else self._latest)
         tick, self._tick = self._tick, asyncio.Event()
         tick.set()
+
+    async def picture(self, tries: int = 10) -> bytes | None:
+        """The screen as it is, painted fresh, as a PNG: what a failed step keeps of its page.
+
+        Taken with the film's own frames, as Chromium's screenshot (``Page.captureScreenshot``) waits for
+        a frame with something new in it, which a still page may never paint. A pixel no one can see is
+        changed first (``NUDGE``), as a frame gives its picture only when something on it changed.
+        ``None`` when no frame gave one in ``tries``.
+        """
+
+        for _ in range(tries):
+            self._asked, self._picture = True, b""
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.cdp.send("Runtime.evaluate", {"expression": NUDGE}), 2)
+            await self.frames(2)
+            if self._picture:
+                return self._picture
+        self._asked = False
+        return None
 
     async def _begin(self, params: dict[str, Any]) -> dict[str, Any]:
         try:

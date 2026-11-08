@@ -902,3 +902,27 @@ def test_a_click_while_zoomed_that_goes_to_another_page_does_not_stop_the_film(
     assert seen["frames after"] >= 10, "the film paints on through the page that replaced the zoomed one"
     assert seen["view after"] is None, "a new page starts on the whole screen"
     assert sum(shot.frames for shot in shots) > 0
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    """A PNG's width and height, from its header."""
+
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "a PNG"
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def test_a_rehearsal_that_stops_on_a_still_page_keeps_that_page_too(tmp_path: Path, chromium: str | None) -> None:
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        # Nothing moves on this page, so no frame of it has anything new to paint.
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        await s.film.frames(30)
+        s.page.set_default_timeout(1000)
+        await s.click(s.page.get_by_role("button", name="A button the app no longer has"))
+
+    with pytest.raises(PlaywrightTimeoutError):
+        _rehearse(tmp_path, run, chromium)
+
+    assert _png_size((tmp_path / FOLDER / "failure.png").read_bytes()) == (1920, 1080)
