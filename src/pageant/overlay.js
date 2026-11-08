@@ -45,9 +45,34 @@
         ui.kicker.textContent = spec.kicker || "";
         ui.title.textContent = spec.title || "";
         ui.sub.textContent = spec.sub || "";
+        ui.sub.style.display = spec.sub ? "" : "none";
+        draw.points(spec.points || [], !!spec.checks);
       }
       ui.card.style.opacity = spec ? "1" : "0";
       draw.pointer();
+    },
+    // A card's points: a numbered list, or ticked for a recap. A row already drawn stays as it is
+    // and a new one fades up into place, so a list the voice reads out appears as it is read.
+    points(points, checks) {
+      while (ui.points.children.length > points.length) ui.points.lastChild.remove();
+      points.forEach((text, index) => {
+        let row = ui.points.children[index];
+        if (!row) {
+          row = make("li", { display: "flex", alignItems: "center", gap: "18px" });
+          row.append(
+            make("span", { flex: "none", width: "40px", height: "40px", borderRadius: "50%", background: "#f7c55f",
+              color: "#14161f", font: "700 19px/40px Inter, system-ui, sans-serif", textAlign: "center" }),
+            make("span", {}));
+          ui.points.append(row);
+          if (!still) {
+            row.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }],
+              { duration: 450, easing: "ease-out" });
+          }
+        }
+        row.children[0].textContent = checks ? "✓" : String(index + 1);
+        row.children[1].textContent = text;
+      });
+      ui.points.style.display = points.length ? "flex" : "none";
     },
     pointer() {
       css(ui.cursor, { display: shown.pointer ? "" : "none", opacity: shown.card ? "0" : "1",
@@ -55,12 +80,15 @@
       if (shown.at) ui.cursor.style.transform = "translate(" + (shown.at[0] - 4) + "px," + (shown.at[1] - 2) + "px)";
     },
   };
+  // Set while a change is drawn at once, so a card's new points come up with no fade either.
+  let still = false;
   // A change drawn at once: what fades in or out is styled once with no transition, then given it back.
   function instantly(change) {
     const fading = [ui.cap, ui.chip, ui.card];
     const fades = fading.map((el) => el.style.transition);
     for (const el of fading) el.style.transition = "none";
-    change();
+    still = true;
+    try { change(); } finally { still = false; }
     void ui.root.offsetHeight;
     fading.forEach((el, index) => { el.style.transition = fades[index]; });
   }
@@ -107,7 +135,10 @@
       textTransform: "uppercase", color: "#f7c55f" });
     ui.title = make("div", { font: "700 54px/1.1 Inter, system-ui, sans-serif", letterSpacing: "-0.02em", maxWidth: "1000px" });
     ui.sub = make("div", { font: "400 24px/1.45 Inter, system-ui, sans-serif", color: "#c9cee0", maxWidth: "900px" });
-    ui.card.append(ui.logo, ui.kicker, ui.title, ui.sub);
+    ui.points = make("ol", { display: "none", flexDirection: "column", gap: "16px", listStyle: "none", margin: "18px 0 0",
+      padding: "0", textAlign: "left", font: "500 29px/1.3 Inter, system-ui, sans-serif", color: "#eef0f8",
+      maxWidth: "900px" });
+    ui.card.append(ui.logo, ui.kicker, ui.title, ui.sub, ui.points);
     // Drawn before it is on the page, so what the page already had shows at once, with no fade.
     draw.label();
     draw.caption();

@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from pageant import bundle, camera
+from pageant import bundle, camera, narrate
 from pageant.apps import Running
 
 REQUIRED = os.environ.get("PAGEANT_STUDIO_TESTS") == "required"
@@ -751,6 +751,53 @@ def _filmed(tmp_path: Path, run: Callable[[Studio], Awaitable[None]], chromium: 
             return list(s.film.shots)
 
     return asyncio.run(go())
+
+
+#: A card's points, read from the page: each row's mark and its words.
+POINTS = """() => {
+  const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
+  const list = root.children[2].children[2].children[4];
+  return getComputedStyle(list).display === "none"
+    ? [] : [...list.children].map((row) => [row.children[0].textContent, row.children[1].textContent]);
+}"""
+
+
+def test_a_cards_points_come_up_one_at_a_time_as_its_line_says_them(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+    points = ["Find it", "Check it", "Buy it"]
+
+    async def run(s: Studio) -> None:
+        # A line 1.2 s long; nothing plays it while the film rolls, so no file is needed.
+        s.lesson.narration["learn"] = {"text": "Find it, check it, and buy it."}
+        s.clips["learn"] = narrate.Clip(file=tmp_path / "learn.wav", seconds=1.2)
+        card, calls = s.card, []
+
+        async def counting(spec: Mapping[str, Any] | None, hold_ms: float = 0) -> None:
+            calls.append((s.clock(), len((spec or {}).get("points") or [])))
+            await card(spec, hold_ms)
+
+        s.card = counting  # type: ignore[method-assign]
+        start = s.clock()
+        await s.tell({"kicker": "In this lesson", "title": "Buying", "points": points}, "learn")
+        seen["calls"] = [(at - start, count) for at, count in calls]
+        seen["ended"] = s.clock() - start
+        seen["rows"] = await s.page.evaluate(POINTS)
+        s.card = card  # type: ignore[method-assign]
+        await s.card({"kicker": "Recap", "title": "Bought", "points": points[:2], "checks": True})
+        seen["ticked"] = await s.page.evaluate(POINTS)
+        await s.card({"kicker": "Next", "title": "No points"})
+        seen["none"] = await s.page.evaluate(POINTS)
+
+    _filmed(tmp_path, run, chromium)
+
+    # The first as the voice starts (its lead), then a third of the line apart, in the line's order.
+    assert [count for _at, count in seen["calls"]] == [1, 2, 3]
+    assert [at for at, _count in seen["calls"]] == pytest.approx([0.25, 0.65, 1.05], abs=1.5 / 60)
+    # Then the rest of the line and the breath after it: 0.25 + 1.2 + 0.45.
+    assert seen["ended"] == pytest.approx(1.9, abs=2 / 60)
+    assert seen["rows"] == [["1", "Find it"], ["2", "Check it"], ["3", "Buy it"]]
+    assert seen["ticked"] == [["✓", "Find it"], ["✓", "Check it"]], "a recap's points are ticked, and one fewer goes"
+    assert seen["none"] == []
 
 
 def test_the_page_keeps_the_films_time_a_frame_at_a_time(tmp_path: Path, chromium: str | None) -> None:

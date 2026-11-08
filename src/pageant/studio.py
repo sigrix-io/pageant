@@ -221,7 +221,7 @@ class Studio:
     #: ``REHEARSAL_WAIT``.
     rehearsal: bool = False
     _caption: str | None = field(default=None, init=False, repr=False)
-    _card: Mapping[str, str] | None = field(default=None, init=False, repr=False)
+    _card: Mapping[str, Any] | None = field(default=None, init=False, repr=False)
     #: Takes away the script that hands what is on screen to the next document (``_carry``).
     _uncarry: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False)
     #: Takes the label down ``Lesson.label_seconds`` after its chapter started (``_label_after``).
@@ -396,8 +396,12 @@ class Studio:
 
         await asyncio.gather(*self._drawing, return_exceptions=True)
 
-    async def card(self, spec: Mapping[str, str] | None, hold_ms: float = 0) -> None:
-        """A title card over the page, with the product's mark unless ``spec`` names one; ``None`` lifts it."""
+    async def card(self, spec: Mapping[str, Any] | None, hold_ms: float = 0) -> None:
+        """A title card over the page, with the product's mark unless ``spec`` names one; ``None`` lifts it.
+
+        ``spec`` holds a ``kicker``, ``title`` and ``sub``, and may hold ``points``: a short list drawn
+        under them, numbered, or ticked with ``checks``. ``"mark": ""`` draws the card with no mark.
+        """
 
         if spec is not None and self.lesson.mark is not None and "mark" not in spec:
             spec = {**spec, "mark": self.lesson.mark.url}
@@ -406,6 +410,37 @@ class Studio:
         self._card = spec
         await self._show()
         await self.sleep(hold_ms)
+
+    async def tell(self, spec: Mapping[str, Any], key: str, extra_ms: float = 0, at: Sequence[float] = ()) -> None:
+        """A card whose points come up one at a time while ``key`` is spoken over it, as a list is read out.
+
+        The first point is up as the line starts, and each next one at ``at``'s share of the line (by
+        default, an equal share apart), so a line that names the points in order shows each as it is
+        said. With no voice (a rehearsal, or an unspoken line) every point is up at once.
+        """
+
+        points = list(spec.get("points") or [])
+        clip = self.clips.get(key)
+        if clip is None or len(points) < 2:
+            await self.card(spec)
+            await self.voice(key, extra_ms)
+            return
+        shares = list(at) or [index / len(points) for index in range(len(points))]
+        if len(shares) != len(points):
+            raise ValueError(f"tell({key!r}): {len(points)} points, but {len(shares)} shares of the line in at")
+        await self._voice_free()
+        start = self.clock() + VOICE_LEAD
+        self.spoken_only.append(timeline.Cue(start, start + clip.seconds + 0.3, self.lesson.narration[key]["text"]))
+        length = self._speak(clip)
+        shown = 0.0
+        for count, share in enumerate(shares, start=1):
+            moment = VOICE_LEAD + share * clip.seconds
+            if moment > shown:
+                await self._wait(moment - shown)
+                shown = moment
+            await self.card({**spec, "points": points[:count]})
+        await self._wait(max(0.0, length - shown))
+        await self.sleep(extra_ms)
 
     async def chapter(self, title: str | None) -> None:
         """The label on screen, and a chapter of the video from here on.

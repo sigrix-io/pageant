@@ -123,7 +123,8 @@ A lesson's steps call the studio, `s`:
 
 | Step | What it does |
 | --- | --- |
-| `s.card(spec, ms)`, `s.card(None)` | a title card over the page, with the product's mark; `None` lifts it |
+| `s.card(spec, ms)`, `s.card(None)` | a title card over the page, with the product's mark; `None` lifts it. `spec`'s `points` are a short list under the title, numbered, or ticked with `"checks": True` for a recap; `"mark": ""` draws it with no mark |
+| `s.tell(spec, key, ms, at)` | a card whose points come up one at a time while the line `key` is spoken over it: the first as the voice starts, each next at its share of the line in `at` (evenly, if none), so a line that names them in order shows each as it is said |
 | `s.chapter(title)` | the label on screen, and a chapter of the video from here on |
 | `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |

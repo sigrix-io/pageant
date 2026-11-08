@@ -8,6 +8,10 @@ described in `VERSIONING.md`.
 
 ### Added
 
+- A card's `points`: a short list under its title, numbered, or ticked for a recap (`"checks": True`),
+  and `Studio.tell`, which brings them up one at a time as a line read over the card names them, so a
+  lesson can open on what it covers and close on what it showed. A point added to a card on screen
+  fades up into place; the rest stay as they are.
 - The lesson engine, moved out of [Bailey](https://github.com/sigrix-io/bailey)'s `lessons/` with
   its tests: the studio that drives a product's page in Chromium and captures every frame, the
   filmed terminal, the voice (Kokoro, on the recording machine), the music made there, the mix,
