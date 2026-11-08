@@ -77,6 +77,9 @@ SPOT_FADE = 0.35
 HOOK_WAIT = 1.0
 #: The foot of the screen a caption of two lines covers, in CSS pixels.
 CAPTION_BAND = 125
+#: How far, in CSS pixels, an element may have moved by the time the mouse goes down before the
+#: pointer goes after it (``Studio.click``).
+AIM = 3.0
 #: Whether an element is in view already, so a step that points at it does not scroll there: all of
 #: it on screen, and either in a bar that stays put as the page scrolls (fixed, or sticky, which
 #: Chromium scrolls the page under rather than bring it nearer) or above the captions with nothing
@@ -613,7 +616,23 @@ class Studio:
         self.mouse = end
 
     async def click(self, locator: Locator) -> None:
+        """Glide to ``locator`` and click it, where it is when the mouse goes down.
+
+        A page can move an element while the pointer is on its way to it (a banner coming in
+        above it, a list laid out again), and a press at the middle it had when the pointer set
+        off lands on whatever is there now. So its box is read again before the press, and the
+        pointer goes on to its middle first if it moved, as a hand corrects its aim.
+        """
+
         await self.glide(locator)
+        box = await locator.bounding_box()
+        if box is not None:
+            aim = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            if math.dist(aim, self.mouse) > AIM:
+                if not self._view_at(self.film.hooked + 1).holds(*aim, margin=24):
+                    await self._look(WHOLE, wait=True)
+                await self._reach(aim)
+                await self.sleep(120)
         self.clicks.append(self.clock())
         await self.page.mouse.down()
         await self.sleep(70)

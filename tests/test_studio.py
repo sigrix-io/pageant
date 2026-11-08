@@ -124,9 +124,30 @@ BAR = """<!doctype html>
 </body></html>
 """
 
+#: Two buttons, one under the other, and a banner that comes in above them when the page is told to:
+#: what the press lands on shows whether a click went where its button was by then.
+SHIFTING = """<!doctype html>
+<html><head><meta charset="utf-8"><title>A page that moves</title></head>
+<body style="margin:0;padding:24px;font:16px/1.4 sans-serif">
+  <div id="slot"></div>
+  <button id="target" type="button" style="display:block;width:200px;height:36px;margin-top:240px"
+    onclick="window.clicked = this.id">Sales</button>
+  <button id="below" type="button" style="display:block;width:200px;height:36px;margin-top:4px"
+    onclick="window.clicked = this.id">Payouts</button>
+  <script>
+    window.shiftIn = (ms) => setTimeout(() => {
+      const banner = document.createElement("div");
+      banner.style.height = "40px";
+      document.getElementById("slot").append(banner);
+    }, ms);
+  </script>
+</body></html>
+"""
+
 PAGES = {
     "/": HOME,
     "/bar": BAR,
+    "/shifting": SHIFTING,
     "/b": _other("Page B"),
     "/slow": _other("A slow page"),
     "/done": _other("Posted"),
@@ -760,6 +781,30 @@ POINTS = """() => {
   return getComputedStyle(list).display === "none"
     ? [] : [...list.children].map((row) => [row.children[0].textContent, row.children[1].textContent]);
 }"""
+
+
+def test_a_click_lands_on_its_element_when_the_page_moves_it_while_the_pointer_is_on_its_way(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.goto(s.page.url + "shifting")
+        await s.page.wait_for_load_state("load")
+        before = await s.page.locator("#target").bounding_box()
+        # In the page's time, a little after the glide has read the button's box and set off.
+        await s.page.evaluate("window.shiftIn(650)")
+        await s.click(s.page.locator("#target"))
+        after = await s.page.locator("#target").bounding_box()
+        seen.update(clicked=await s.page.evaluate("window.clicked || null"), moved=after["y"] - before["y"])
+        seen["mouse"], seen["middle"] = s.mouse, (after["x"] + after["width"] / 2, after["y"] + after["height"] / 2)
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["moved"] == pytest.approx(40, abs=0.5), "the banner came in while the pointer was on its way"
+    assert seen["clicked"] == "target"
+    assert seen["mouse"] == pytest.approx(seen["middle"], abs=0.5)
 
 
 def test_a_cards_points_come_up_one_at_a_time_as_its_line_says_them(tmp_path: Path, chromium: str | None) -> None:
