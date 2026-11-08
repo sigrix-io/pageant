@@ -41,8 +41,10 @@ FLAGS = ("--enable-begin-frame-control", "--deterministic-mode")
 STUCK = 2.0
 #: How the frames are kept: JPEG, at this quality.
 QUALITY = 90
-#: How many times the same moment is painted again for a zoomed frame's screenshot that missed its frame.
-REPAINTS = 3
+#: How many times the same moment is painted again for a zoomed frame's screenshot that missed its
+#: frame, and how long, in real seconds, its answer is waited for after each.
+REPAINTS = 4
+TAKEN = 0.03
 #: A frame's pixels: the screen at the device scale the browser paints it at.
 FRAME_WIDTH, FRAME_HEIGHT = 1920, 1080
 #: How many of the frame's pixels a zoomed frame's screenshot is taken larger than the frame, right and below.
@@ -140,7 +142,6 @@ class Film:
     async def _run(self) -> None:
         try:
             while not self._stopping:
-                await self._advance()
                 await self._paint_one()
         except BaseException as error:
             self._failure = error
@@ -203,16 +204,20 @@ class Film:
             }
             params = {"format": "jpeg", "quality": QUALITY, "clip": clip}
             shot = asyncio.ensure_future(self.cdp.send("Page.captureScreenshot", params))
-            # The request has to reach Chromium before the frame it rides on is asked for.
-            await asyncio.sleep(0)
             try:
+                # The request has to reach Chromium before the frame it rides on is asked for: the
+                # page's time moves on in between, which takes a few round trips.
+                await self._advance()
                 painted = await self._begin(begin)
                 for again in range(1, REPAINTS + 1):
-                    if (await asyncio.wait({shot}, timeout=0.5))[0]:
+                    if (await asyncio.wait({shot}, timeout=TAKEN))[0]:
                         break
-                    # Not taken in that frame: paint the same moment again, a hair later, for it.
+                    # Not taken in that frame (a scaled screenshot often waits for the frame after
+                    # the one it was asked before): paint the same moment again, a hair later, for it.
                     repainted = await self._begin({**begin, "frameTimeTicks": begin["frameTimeTicks"] + 0.01 * again})
                     painted = repainted if repainted.get("screenshotData") else painted
+                else:
+                    await asyncio.wait({shot}, timeout=1.0)
                 if shot.done() and not shot.cancelled() and shot.exception() is None:
                     clipped = base64.b64decode(shot.result()["data"])
                 # A screenshot not taken (the page went to another while it waited) leaves the frame
@@ -221,6 +226,7 @@ class Film:
                 if not shot.done():
                     shot.cancel()
         else:
+            await self._advance()
             painted = await self._begin(begin)
         if painted.get("screenshotData"):
             self._latest = base64.b64decode(painted["screenshotData"])
