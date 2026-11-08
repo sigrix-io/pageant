@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from pageant import bundle, camera, film
+from pageant import bundle, camera
 from pageant.apps import Running
 
 REQUIRED = os.environ.get("PAGEANT_STUDIO_TESTS") == "required"
@@ -45,7 +45,8 @@ try:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
-    from pageant import studio
+    # The film and the studio drive Chromium through Playwright, which only the record extra installs.
+    from pageant import film, studio
     from pageant.studio import Lesson, Studio
 except ModuleNotFoundError as missing:
     if REQUIRED:
