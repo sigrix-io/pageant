@@ -71,6 +71,14 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A page on another site than the one before it (a payment provider's checkout, and the app it sends
+  the buyer back to) held its CSS animations at their first keyframe: a menu that fades in was open,
+  and took clicks, but never showed, and a title card never came up. Chromium draws such a page with a
+  renderer of its own, whose clock starts at the machine's time, which a recording's frames had fallen
+  tens of seconds behind; frames timed before a page's time leave its animations waiting for them. The
+  film reads where each renderer's clock began (`virtualTimeTicksBase`, in every answer to its
+  `setVirtualTimePolicy`) and moves the frames' times on to `BEHIND` (0.1 s) short of the page's time:
+  a frame level with it was never drawn on Stripe's Checkout page.
 - A step on a page still in its view transition (an app's CSS `@view-transition`) was swallowed: until
   the transition ends, the page hit-tests as `<html>`. A step now waits for it, as a person does, and
   skips one still running after `TRANSITION_FRAMES` (1.5 s), through the handle the page was

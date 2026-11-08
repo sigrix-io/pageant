@@ -13,6 +13,16 @@ long poll) is let run past after ``STUCK`` seconds of waiting, so it cannot hold
 and while a fetch that has been open that long is still open, the page's time runs on without
 waiting for fetches at all, so it costs the film one wait rather than one a frame.
 
+A page on another site is drawn by a renderer of its own, which Chromium starts with the page's
+time set to the machine's clock, ahead of the frames' by however much longer than the film the
+recording has taken to paint so far (seconds, or a minute); and a page whose time is ahead of its
+frames' holds its CSS animations at their first keyframe until the frames catch up, which they may
+never do: a menu that fades in stays invisible. So the frames keep the time of the renderer drawing
+the page: each answer to the film's ``setVirtualTimePolicy`` says when that renderer's time began
+(``virtualTimeTicksBase``), and the film, having moved it on by every frame's worth since, times the
+next frame no more than ``BEHIND`` before the page's time. The frames' times only ever move on; the
+film's own clock, its frames counted, is not changed.
+
 The film paints from before the first page loads to the end of the recording: a page's scripts,
 its loads and Playwright's own waits all need frames. It writes them to its folder only while it
 is ``rolling``, and a frame the same as the one before (nothing on the page moved) is not written
@@ -42,6 +52,12 @@ FPS = 60
 FLAGS = ("--enable-begin-frame-control", "--deterministic-mode")
 #: Seconds the film waits for a fetch before it lets the page's time run past it.
 STUCK = 2.0
+#: Seconds behind the page's time a frame is timed, at least, when the frames catch up with it
+#: (``Film._next_time``). In a browser a frame always began a little before the page's now, and the
+#: film holds the page's clock still until a frame is drawn: timed level with it, a frame on Stripe's
+#: Checkout page was never drawn. What waits instead is a page's first tenth of a second of CSS
+#: animation.
+BEHIND = 0.1
 #: How the frames are kept: JPEG, at this quality.
 QUALITY = 90
 #: How many times the same moment is painted again for a zoomed frame's screenshot that missed its
@@ -114,6 +130,12 @@ class Film:
     _kept: bytes = field(default=b"", init=False, repr=False)
     #: The page's requests not yet answered, by id, with the machine's time each was sent at.
     _open: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    #: When the time of the renderer drawing the page began, in the milliseconds of the machine's clock
+    #: that frames are timed in, and how much of it the film has moved on since: the page's time now.
+    _began: float | None = field(default=None, init=False, repr=False)
+    _moved: float = field(default=0.0, init=False, repr=False)
+    #: How far the frames' times have been moved on to keep up with a renderer started after the film.
+    _caught_up: float = field(default=0.0, init=False, repr=False)
 
     def clock(self) -> float:
         return self.count / FPS
@@ -121,7 +143,7 @@ class Film:
     async def start(self) -> None:
         """Hold the page's time, and start painting a frame for each frame's worth of it."""
 
-        await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "pause"})
+        self._renderer(await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "pause"}))
         self.cdp.on("Network.requestWillBeSent", self._sent)
         self.cdp.on("Network.loadingFinished", self._answered)
         self.cdp.on("Network.loadingFailed", self._answered)
@@ -205,17 +227,44 @@ class Film:
         self.cdp.once("Emulation.virtualTimeBudgetExpired", done)
         budget = 1000 / FPS
         if self.stuck():
-            await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "advance", "budget": budget})
+            await self._policy("advance", budget)
             await expired
-            return
-        await self.cdp.send(
-            "Emulation.setVirtualTimePolicy", {"policy": "pauseIfNetworkFetchesPending", "budget": budget}
-        )
-        try:
-            await asyncio.wait_for(asyncio.shield(expired), STUCK)
-        except TimeoutError:
-            await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "advance", "budget": budget})
-            await expired
+        else:
+            await self._policy("pauseIfNetworkFetchesPending", budget)
+            try:
+                await asyncio.wait_for(asyncio.shield(expired), STUCK)
+            except TimeoutError:
+                await self._policy("advance", budget)
+                await expired
+        self._moved += budget
+
+    async def _policy(self, policy: str, budget: float) -> None:
+        self._renderer(await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": policy, "budget": budget}))
+
+    def _renderer(self, answer: dict[str, Any] | None) -> None:
+        """Note when the time of the renderer drawing the page began: a renderer new since the last
+        answer (the page went to another site) began its own, which the film has not moved on yet."""
+
+        began = (answer or {}).get("virtualTimeTicksBase")
+        if began and began != self._began:
+            self._began, self._moved = float(began), 0.0
+
+    def _next_time(self) -> float:
+        """When the next frame is: a frame after the last, or ``BEHIND`` the page's time if that is later.
+
+        The page's time is that far ahead only where a renderer started since the film did: it began
+        on the machine's clock, which a recording's frames fall behind, and a frame far behind its
+        page's time leaves the page's CSS animations at their first keyframe. The frames' times catch
+        up with it there, and only ever move on.
+        """
+
+        at = self._base + self._caught_up + (self.count + 1) * 1000 / FPS
+        if self._began is not None:
+            page = self._began + self._moved - BEHIND * 1000
+            if page > at:
+                self._caught_up += page - at
+                at = page
+        return at
 
     async def _paint_one(self) -> None:
         """Paint the next frame, and keep it if the film is rolling.
@@ -229,7 +278,8 @@ class Film:
         self.hooked = self.count + 1
         if self.before is not None:
             await self.before(self.hooked)
-        begin: dict[str, Any] = {"frameTimeTicks": self._base + (self.count + 1) * 1000 / FPS, "interval": 1000 / FPS}
+        # Its time is set once the page's time has moved on to it (``_next_time``).
+        begin: dict[str, Any] = {"interval": 1000 / FPS}
         shooting = self.folder is not None
         asked = self._asked
         if asked:
@@ -258,6 +308,7 @@ class Film:
                 # The request has to reach Chromium before the frame it rides on is asked for: the
                 # page's time moves on in between, which takes a few round trips.
                 await self._advance()
+                begin["frameTimeTicks"] = self._next_time()
                 painted = await self._begin(begin)
                 for again in range(1, REPAINTS + 1):
                     if (await asyncio.wait({shot}, timeout=TAKEN))[0]:
@@ -277,6 +328,7 @@ class Film:
                     shot.cancel()
         else:
             await self._advance()
+            begin["frameTimeTicks"] = self._next_time()
             painted = await self._begin(begin)
         if painted.get("screenshotData") and asked:
             self._picture, self._asked = base64.b64decode(painted["screenshotData"]), False

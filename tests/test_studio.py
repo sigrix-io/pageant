@@ -10,7 +10,8 @@ uses with nothing spoken or filmed, against a small app of their own. They also 
 label to its corner and its seconds on every page, the spotlight to coming up where its element is
 and to being down while the page scrolls to the next, a step to scrolling only to what is not in
 view (a control in a sticky top bar is, and Chromium would scroll the page under the bar for it),
-and a paste to one input; and the film (``film.py``): the page's time moving a frame at a time, the
+and a paste to one input; and the film (``film.py``): the page's time moving a frame at a time, on
+a page on another site as well, which Chromium starts a renderer for with its own clock, the
 pointer drawn along its path a point a frame, the camera framing a spotlight and coming back out, a
 still screen held in one file, a zoomed frame taken whole, and a click while zoomed that goes to
 another page not stopping it.
@@ -844,6 +845,34 @@ def test_a_click_lands_on_its_element_when_the_page_moves_it_while_the_pointer_i
     assert seen["mouse"] == pytest.approx(seen["middle"], abs=0.5)
 
 
+def test_a_page_on_another_site_keeps_the_films_time_however_far_the_machines_clock_has_run_ahead(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    # #drifting moves 100 px a second, over and over.
+    where = "() => new DOMMatrix(getComputedStyle(document.querySelector('#drifting')).transform).m41"
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        # The machine's clock runs on while the film's stands still, as it does while a recording
+        # paints its frames; then the page goes to another site (localhost is not 127.0.0.1), which
+        # Chromium draws with a renderer of its own, its time started on the machine's clock.
+        time.sleep(3)
+        await s.page.goto(s.page.url.replace("127.0.0.1", "localhost"))
+        await s.page.wait_for_load_state("load")
+        await s.film.frames(10)
+        before, first = s.film.count, await s.page.evaluate(where)
+        await s.film.frames(15)
+        second, after = await s.page.evaluate(where), s.film.count
+        seen.update(moved=(second - first) % 100, frames=after - before)
+
+    _filmed(tmp_path, run, chromium)
+
+    # Moved as far as the frames take it, not held at its first keyframe until the frames catch up
+    # with the page's time three seconds later.
+    assert seen["moved"] == pytest.approx(seen["frames"] * 100 / 60, abs=2 * 100 / 60)
+
+
 def test_a_request_that_never_ends_costs_the_film_one_wait_rather_than_one_a_frame(
     tmp_path: Path, chromium: str | None
 ) -> None:
@@ -873,10 +902,16 @@ def test_a_step_on_a_page_still_in_its_view_transition_waits_for_it_or_skips_it(
 
     async def run(s: Studio) -> None:
         await s.card(None)
-        await s.page.goto(f"{s.page.url}fade-{seconds}")
-        await s.click(s.page.locator("#go"))
-        await s.arrive(f"**/faded-{seconds}")
-        seen["in it"] = await s.page.evaluate("() => document.documentElement.matches(':active-view-transition')")
+        home = s.page.url
+        # Now and then Chromium starts no transition for the change (``pagereveal`` hands the new page
+        # none), about one change in ten here; the change is made again then.
+        for _ in range(3):
+            await s.page.goto(f"{home}fade-{seconds}")
+            await s.click(s.page.locator("#go"))
+            await s.arrive(f"**/faded-{seconds}")
+            seen["in it"] = await s.page.evaluate("() => document.documentElement.matches(':active-view-transition')")
+            if seen["in it"]:
+                break
         before = s.film.count
         await s.click(s.page.locator("#hit"))
         seen.update(hit=await s.page.evaluate("window.hits || 0"), frames=s.film.count - before)
