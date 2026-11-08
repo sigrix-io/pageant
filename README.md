@@ -130,7 +130,7 @@ A lesson's steps call the studio, `s`:
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
 | `s.quiet()` | takes the caption down |
 | `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped; the spotlight comes up where the element is, and one already up is taken down while the page scrolls there. With the lesson's `zoom`, or `zoom=` for this one, the camera moves in on it |
-| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, along a gently curved path that speeds up and slows down, a point a frame, once the page has stopped scrolling to it, and clicks, with a sound |
+| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, along a gently curved path that speeds up and slows down, a point a frame, once the page has stopped scrolling to it and once a view transition it is in is over, and clicks, with a sound, where the element is when the mouse goes down |
 | `s.arrive(url)` | waits for the page a step went to, loaded: `url` is its address, a glob such as `"**/checkout/done"`, a regular expression, or a function of the address |
 | `s.type(locator, text)` | types as a person does, a key every frame or more |
 | `s.paste(locator, text)` | puts text in at once, as a paste does, for words too long to watch being typed |
