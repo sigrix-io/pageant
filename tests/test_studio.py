@@ -10,7 +10,10 @@ uses with nothing spoken or filmed, against a small app of their own. They also 
 label to its corner and its seconds on every page, the spotlight to coming up where its element is
 and to being down while the page scrolls to the next, a step to scrolling only to what is not in
 view (a control in a sticky top bar is, and Chromium would scroll the page under the bar for it),
-and a paste to one input.
+and a paste to one input; and the film (``film.py``): the page's time moving a frame at a time, the
+pointer drawn along its path a point a frame, the camera framing a spotlight and coming back out, a
+still screen held in one file, a zoomed frame taken whole, and a click while zoomed that goes to
+another page not stopping it.
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
@@ -20,6 +23,7 @@ they are skipped, unless ``PAGEANT_STUDIO_TESTS=required``, as CI's studio job s
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import re
 import threading
@@ -31,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from pageant import bundle
+from pageant import bundle, camera
 from pageant.apps import Running
 
 REQUIRED = os.environ.get("PAGEANT_STUDIO_TESTS") == "required"
@@ -41,7 +45,8 @@ try:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
-    from pageant import studio
+    # The film and the studio drive Chromium through Playwright, which only the record extra installs.
+    from pageant import film, studio
     from pageant.studio import Lesson, Studio
 except ModuleNotFoundError as missing:
     if REQUIRED:
@@ -52,7 +57,8 @@ except ModuleNotFoundError as missing:
 READ = """() => {
   const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
   if (!root) return null;
-  const [, , caption, label, card, pointer] = root.children;
+  const [, , screen, pointer] = root.children;
+  const [caption, label, card] = screen.children;
   const seen = (el) => {
     const style = getComputedStyle(el);
     return style.opacity === "1" && style.visibility !== "hidden" && style.display !== "none";
@@ -253,7 +259,9 @@ def test_the_page_a_link_goes_to_has_the_label_the_caption_and_the_pointer_in_it
 ) -> None:
     first = _first_frame(tmp_path, chromium)
 
-    assert first["its script had run"] is False, "the frame was painted before the page's DOMContentLoaded"
+    # The film's clock waits for what a page fetches, so the page's first frame shows it loaded, its
+    # deferred script run, rather than half drawn: what is on screen is in that frame all the same.
+    assert first["its script had run"] is True, "painted once the page had what it fetched"
     assert (first["label"], first["caption"]) == ("1 · Sell", "Open the next page.")
     assert _pointer(first) == pytest.approx(first["mouse"], abs=0.5), "where the click was, not the middle"
     assert first["fading"] == 0, "drawn at once, with no fade in"
@@ -466,10 +474,10 @@ def test_glide_moves_on_from_a_target_that_never_holds_still(
 
     async def run(s: Studio) -> None:
         await s.card(None)
-        began = time.monotonic()
+        began = s.film.clock()
         # Bounded here, so a glide that waits for ever fails this rather than stalling the suite.
-        await asyncio.wait_for(s.glide(s.page.locator("#drifting")), timeout=10)
-        seen["took"] = time.monotonic() - began
+        await asyncio.wait_for(s.glide(s.page.locator("#drifting")), timeout=30)
+        seen["took"] = s.film.clock() - began
 
     _rehearse(tmp_path, run, chromium)
 
@@ -518,7 +526,7 @@ def test_a_rehearsal_stops_at_a_step_the_app_no_longer_has_and_keeps_the_page(
 #: Where the chapter label is drawn: its text while it is up, and the side of the screen it is on.
 LABEL = """() => {
   const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
-  const label = root.children[3];
+  const label = root.children[2].children[1];
   const box = label.getBoundingClientRect();
   return { text: getComputedStyle(label).opacity === "1" ? label.textContent : null,
     side: box.left + box.width / 2 < innerWidth / 2 ? "left" : "right" };
@@ -556,7 +564,7 @@ def test_the_label_comes_down_when_its_seconds_are_up_and_no_page_after_draws_it
         await s.card(None)
         await s.chapter("1 · Sell")
         await s.say("Still speaking.", 0)
-        await asyncio.sleep(1.5)
+        await s.film.seconds(1.5)
         await s.page.wait_for_function(STILL)
         seen["after its seconds"] = await s.page.evaluate(READ)
         await s.page.goto(home + "b")
@@ -581,7 +589,7 @@ def test_the_label_stays_up_until_the_next_chapter_unless_the_lesson_says(tmp_pa
     async def run(s: Studio) -> None:
         await s.card(None)
         await s.chapter("1 · Sell")
-        await asyncio.sleep(0.8)
+        await s.film.seconds(0.8)
         await s.page.wait_for_function(STILL)
         seen["later"] = await s.page.evaluate(LABEL)
 
@@ -710,3 +718,211 @@ def test_a_spotlight_moving_to_an_element_out_of_view_is_down_while_the_page_scr
 
     assert seen["while scrolling"] == {"0"}, "down before the page moved, not trailing the cart"
     assert seen["landed"] == {"up": "1", "left": pytest.approx(0, abs=1), "top": pytest.approx(0, abs=1)}
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int]:
+    """A JPEG's width and height, read from its frame header."""
+
+    at = 2
+    while at < len(data):
+        marker, length = data[at + 1], int.from_bytes(data[at + 2 : at + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2):
+            return int.from_bytes(data[at + 7 : at + 9], "big"), int.from_bytes(data[at + 5 : at + 7], "big")
+        at += 2 + length
+    raise ValueError("no frame header")
+
+
+def _filmed(tmp_path: Path, run: Callable[[Studio], Awaitable[None]], chromium: str | None, **lesson: Any) -> list[Any]:
+    """``run`` on a rolling film that keeps its frames, as a recording's does; the film's shots."""
+
+    staged = Lesson(
+        page=PAGE, title={"kicker": "", "title": "", "sub": ""}, narration={}, run=run, app=_Site(), **lesson
+    )
+    frames, work = tmp_path / "frames", tmp_path / "work"
+    frames.mkdir()
+    work.mkdir()
+
+    async def go() -> list[Any]:
+        async with studio._staged(staged, tmp_path, work, chromium, {}, frames=frames) as s:
+            s.film.roll()
+            s.started = s.film.clock()
+            await run(s)
+            s.film.rolling = False
+            return list(s.film.shots)
+
+    return asyncio.run(go())
+
+
+def test_the_page_keeps_the_films_time_a_frame_at_a_time(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+    # #drifting moves 100 px a second, over and over.
+    where = "() => new DOMMatrix(getComputedStyle(document.querySelector('#drifting')).transform).m41"
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        before, first = s.film.count, await s.page.evaluate(where)
+        await s.film.frames(15)
+        second, after = await s.page.evaluate(where), s.film.count
+        seen.update(moved=(second - first) % 100, frames=(after - before))
+
+    _rehearse(tmp_path, run, chromium)
+
+    # As far as the frames painted between the two reads take it, give or take the frame each read fell in.
+    assert seen["moved"] == pytest.approx(seen["frames"] * 100 / 60, abs=2 * 100 / 60)
+    assert 15 <= seen["frames"] <= 17
+
+
+def test_the_pointer_is_drawn_along_its_path_a_point_a_frame(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+    trail = """() => {
+      const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+      const pointer = root.children[3];
+      window.trail = [];
+      const note = () => { window.trail.push(pointer.style.transform); requestAnimationFrame(note); };
+      requestAnimationFrame(note);
+    }"""
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.evaluate(trail)
+        seen["from"] = s.mouse
+        await s.glide(s.page.locator("#hero"))
+        seen["to"] = s.mouse
+        seen["trail"] = await s.page.evaluate("window.trail")
+
+    _rehearse(tmp_path, run, chromium)
+
+    drawn = []
+    for transform in seen["trail"]:
+        x, y = (float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", transform))
+        point = (x + 4, y + 2)
+        if not drawn or point != drawn[-1]:
+            drawn.append(point)
+    expected = camera.path(seen["from"], seen["to"], studio.FPS)
+    first = next(index for index, point in enumerate(drawn) if math.dist(point, expected[0]) < 0.01)
+    # The path's points, then the page's own mouse move to its end, which it reports in whole pixels.
+    moves = drawn[first : first + len(expected)]
+    assert len(moves) == len(expected), "one point a frame, none twice and none skipped"
+    for got, want in zip(moves, expected, strict=True):
+        assert got == pytest.approx(want, abs=0.01)
+    assert all(math.dist(point, seen["to"]) < 1 for point in drawn[first + len(expected) :])
+
+
+def test_the_camera_frames_a_spotlight_and_comes_back_when_it_lifts_or_the_pointer_leaves(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    layer = """() => [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000")
+      .children[2].style.transform"""
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        line = s.page.locator("#line")
+        await s.spot(line)
+        await s.film.seconds(camera.MOVE_SECONDS + 0.1)
+        box = await line.bounding_box()
+        assert box is not None
+        seen["box"] = box
+        seen["scroll"] = await s.page.evaluate("[scrollX, scrollY]")
+        seen["zoomed clip"] = s.film.clip
+        seen["zoomed layer"] = await s.page.evaluate(layer)
+        await s.spot(None)
+        await s.film.seconds(camera.MOVE_SECONDS + 0.1)
+        seen["lifted clip"], seen["lifted layer"] = s.film.clip, await s.page.evaluate(layer)
+        await s.spot(line)
+        await s.film.seconds(camera.MOVE_SECONDS + 0.1)
+        seen["again"] = s.film.clip
+        await s.glide(s.page.locator("#cart"))
+        seen["after the pointer left"] = s.film.clip
+
+    _rehearse(tmp_path, run, chromium, zoom=2.0)
+
+    box, (left, top) = seen["box"], seen["scroll"]
+    view = camera.framing(
+        (box["x"] - 8, box["y"] - 8, box["width"] + 16, box["height"] + 16), 2.0, band=studio.CAPTION_BAND
+    )
+    assert view.scale == pytest.approx(2.0)
+    assert seen["zoomed clip"] == pytest.approx(
+        {"x": view.x + left, "y": view.y + top, "width": view.width, "height": view.height}
+    )
+    x, y, scale = (float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", seen["zoomed layer"]))
+    assert (x, y, scale) == pytest.approx((view.x, view.y, 0.5)), "the captions drawn into the view, at half size"
+    assert (seen["lifted clip"], seen["lifted layer"]) == (None, "")
+    assert seen["again"] is not None
+    assert seen["after the pointer left"] is None, "out to the whole screen before going to the cart"
+
+
+def test_a_film_holds_a_still_frame_and_keeps_a_zoomed_one_whole_sized(tmp_path: Path, chromium: str | None) -> None:
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        # A page with nothing moving on it (the first page's #drifting never stops).
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        await s.film.frames(40)
+        await s.spot(s.page.locator("#cart"), zoom=2.0)
+        await s.film.seconds(camera.MOVE_SECONDS + 0.3)
+
+    shots = _filmed(tmp_path, run, chromium, zoom=2.0)
+
+    assert max(shot.frames for shot in shots) >= 30, "a still screen is one file, held"
+    sizes = {_jpeg_size(shot.file.read_bytes()) for shot in shots}
+    # Whole frames exactly 1920x1080; zoomed ones a few pixels over, which the encoder crops off.
+    assert (1920, 1080) in sizes
+    assert all(1920 <= w <= 1920 + film.SPARE + 1 and 1080 <= h <= 1080 + film.SPARE + 1 for w, h in sizes), sizes
+    assert len(sizes) > 1, "some frames zoomed"
+    assert sum(shot.frames for shot in shots) >= 40 + camera.frames_for(camera.MOVE_SECONDS, studio.FPS)
+
+
+def test_a_click_while_zoomed_that_goes_to_another_page_does_not_stop_the_film(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        link = s.page.locator("#to-b")
+        await s.spot(link, zoom=2.0)
+        await s.film.seconds(camera.MOVE_SECONDS)
+        seen["zoomed"] = s.film.clip is not None
+        # The link is in the view, so the camera stays as the pointer goes to it and clicks.
+        await s.click(link)
+        await s.arrive("**/b")
+        before = s.film.count
+        await s.film.frames(10)
+        seen["frames after"] = s.film.count - before
+        seen["view after"] = s.film.clip
+
+    shots = _filmed(tmp_path, run, chromium, zoom=2.0)
+
+    assert seen["zoomed"] is True
+    assert seen["frames after"] >= 10, "the film paints on through the page that replaced the zoomed one"
+    assert seen["view after"] is None, "a new page starts on the whole screen"
+    assert sum(shot.frames for shot in shots) > 0
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    """A PNG's width and height, from its header."""
+
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "a PNG"
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def test_a_rehearsal_that_stops_on_a_still_page_keeps_that_page_too(tmp_path: Path, chromium: str | None) -> None:
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        # Nothing moves on this page, so no frame of it has anything new to paint.
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        await s.film.frames(30)
+        s.page.set_default_timeout(1000)
+        await s.click(s.page.get_by_role("button", name="A button the app no longer has"))
+
+    with pytest.raises(PlaywrightTimeoutError):
+        _rehearse(tmp_path, run, chromium)
+
+    assert _png_size((tmp_path / FOLDER / "failure.png").read_bytes()) == (1920, 1080)

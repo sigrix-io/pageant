@@ -118,10 +118,13 @@ jobs:
           for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json; do
             test -s "$bundle/$name" || { echo "::error::$bundle/$name is missing or empty"; exit 1; }
           done
-          picture=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 "$bundle/video.mp4")
+          # Read from ffprobe's JSON: its CSV gains fields of its own from one ffmpeg release to the next.
+          stream=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of json "$bundle/video.mp4")
+          echo "$stream"
+          picture=$(python3 -c 'import json, sys; s = json.load(sys.stdin)["streams"][0]; print(",".join(str(s[k]) for k in ("codec_name", "width", "height", "r_frame_rate")))' <<<"$stream")
           sound=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 "$bundle/video.mp4")
           echo "picture: $picture, sound: $sound"
-          test "$picture" = "h264,1920,1080,30/1"
+          test "$picture" = "h264,1920,1080,60/1"
           test "$sound" = "aac,48000"
           cat "$bundle/chapters.txt"
           # Refuses chapters YouTube would not show: fewer than three, or one under ten seconds.
