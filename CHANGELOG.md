@@ -39,6 +39,17 @@ described in `VERSIONING.md`.
   so the step after a click that goes to another page does not start on the page before.
 - `tests/test_studio.py` drives the studio in Chromium, and CI's studio job runs it with the
   record extra installed; elsewhere it is skipped.
+- `Lesson.pronounce`: words the voice says differently from how they are written, respelled in
+  every line it speaks, the captions keeping the written form (`pageant.pronounce`). A domain's
+  `.io` was read as one syllable ("dot ee-oh") until a lesson could respell it once.
+- `Lesson.label_corner` and `Lesson.label_seconds`: the chapter label can sit top left, and come
+  down a few seconds after its chapter starts, on whatever page the lesson is on by then, rather
+  than staying over an app's own controls at the top right. Unset, it stays where and as long as
+  it did.
+- `Lesson.loudness`: the mix's target in LUFS, -16 unless a lesson says, the level web players
+  expect, or -14, the level YouTube plays every video at and the one it turns nothing up to.
+- `s.paste(locator, text)`: puts long text in at once, as a paste does, rather than typing it a
+  key at a time.
 
 ### Fixed
 
@@ -58,6 +69,16 @@ described in `VERSIONING.md`.
   the scroll's start at most; `spot` waits the same way before drawing the spotlight.
 - A `failure.png` left by an earlier run is removed when a lesson is recorded or rehearsed again,
   so one in a lesson's folder is from the last run.
+- The mix is set to its loudness in two passes (`pageant.loudness`): one pass of `loudnorm` left
+  a lesson mixed for -16 LUFS at -16.6 LUFS, measured.
+- The spotlight comes up where its element is, rather than sliding there from where it last was:
+  on a page just opened, from the screen's corner. Moving to an element out of view, it is taken
+  down before the page scrolls there, rather than trailing the last element off the screen.
+- `spot` and `glide` do not scroll to an element in view: all of it on screen, and either in a
+  bar that stays put as the page scrolls or clear of the captions with nothing over it. Chromium
+  scrolls the page under a sticky top bar to bring a control in it nearer, so pointing at an
+  app's cart or account menu moved the page under the bar; and a page moved under the pointer
+  for nothing.
 
 ### Changed, from Bailey's `lessons/`
 

@@ -110,6 +110,10 @@ A `Lesson` holds:
 | `setup` | steps on the page before the recording starts, so a lesson starts where the one before left off |
 | `commands` | stand-in programs put first on the app's `PATH` and the terminal's, each a name and the script this Python runs |
 | `mark` | the product's mark on the title cards: the address its app serves it at, and the file |
+| `label_corner` | where the chapter label sits: `top-right`, or `top-left` for an app whose controls are on the right |
+| `label_seconds` | how long the chapter label shows after its chapter starts; unset, it stays up until the next one |
+| `pronounce` | words the voice says differently from how they are written, respelled in every line it speaks while the captions keep the written form: `{"example.io": "example dot eye oh"}` |
+| `loudness` | the mix's loudness in LUFS, set in two passes: -16 unless it says, the level web players expect, or -14, what YouTube plays every video at |
 
 A lesson's steps call the studio, `s`:
 
@@ -120,10 +124,11 @@ A lesson's steps call the studio, `s`:
 | `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
 | `s.quiet()` | takes the caption down |
-| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped |
+| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped; the spotlight comes up where the element is, and one already up is taken down while the page scrolls there |
 | `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, once the page has stopped scrolling to it, and clicks, with a sound |
 | `s.arrive(url)` | waits for the page a step went to, loaded: `url` is its address, a glob such as `"**/checkout/done"`, a regular expression, or a function of the address |
 | `s.type(locator, text)` | types as a person does |
+| `s.paste(locator, text)` | puts text in at once, as a paste does, for words too long to watch being typed |
 | `s.terminal(title, where)` | leaves the page for a terminal |
 | `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
 | `s.sleep(ms)` | waits |
@@ -145,7 +150,11 @@ await s.say("paid")
 Before the pointer moves to an element, the studio scrolls it to the middle of the page and waits
 for the scroll to stop, until two reads of the element's box 120 ms apart agree, since a long
 smooth scroll is still moving after a short one is over. It waits three seconds from the scroll's
-start at most, for an element that never holds still.
+start at most, for an element that never holds still. An element already in view is not scrolled
+to: all of it on screen, and either in a bar that stays put as the page scrolls (fixed or sticky)
+or clear of the captions at the foot of the screen with nothing drawn over its middle. Chromium
+scrolls the page under a sticky top bar to bring a control in it nearer, so a lesson pointing at
+an app's cart or account menu would otherwise move the page under the bar.
 
 The video's chapters follow YouTube's rules, since a video that breaks them shows none: the first
 starts at 0:00 whenever the lesson marked it, and a chapter shorter than ten seconds runs on into
@@ -275,7 +284,8 @@ ruff check . && ruff format --check . && mypy && pytest
 
 The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows, except
 `tests/test_studio.py`, which drives the studio in Chromium: a lesson that goes from page to page,
-a click after a long scroll, a rehearsal. It is skipped without the `record` extra and a Chromium
+a click after a long scroll, the chapter label and the spotlight, what is scrolled to and what is
+not, a paste, a rehearsal. It is skipped without the `record` extra and a Chromium
 (`playwright install chromium`, or one `PAGEANT_CHROMIUM` names), and CI's studio job runs it,
 where `PAGEANT_STUDIO_TESTS=required` fails a skip. CI's record job rehearses and films the
 example lesson from a fresh install of the wheel, on Linux, and keeps the video as an artifact of

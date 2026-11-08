@@ -24,6 +24,8 @@ from typing import Any
 
 import numpy as np
 
+from pageant.pronounce import spoken
+
 RELEASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 MODEL = "kokoro-v1.0.int8.onnx"
 VOICES = "voices-v1.0.bin"
@@ -108,14 +110,17 @@ class Voice:
         return str(self.kokoro().tokenizer.phonemize(words, lang=self.lang))
 
 
-def speak(lines: Mapping[str, Mapping[str, str]], voice: Voice) -> dict[str, Clip]:
-    """A clip for every line: its ``spoken`` words where it has them, else its ``text``."""
+def speak(
+    lines: Mapping[str, Mapping[str, str]], voice: Voice, pronounce: Mapping[str, str] | None = None
+) -> dict[str, Clip]:
+    """A clip for every line: its ``spoken`` words where it has them, else its ``text``, each word the
+    lesson respells for the voice (``pronounce``, ``pronounce.py``) said as it says."""
 
     folder = cache_folder() / "voice"
     folder.mkdir(parents=True, exist_ok=True)
     clips = {}
     for key, line in lines.items():
-        words = line.get("spoken") or line["text"]
+        words = spoken(line.get("spoken") or line["text"], pronounce or {})
         name = hashlib.sha256(f"{voice.name}|{voice.speed}|{voice.lang}|{words}".encode()).hexdigest()[:20]
         path = folder / f"{name}.wav"
         if not path.exists():

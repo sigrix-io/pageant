@@ -6,7 +6,11 @@ a form post, a server redirect) used to leave the next page with no chapter labe
 the pointer drawn at the middle of the screen; and ``glide`` read where its target was 450 ms into a
 smooth scroll, which a long one is still in, so the click went where the target had been. These
 hold that neither happens, by running lessons through ``studio.rehearse``, the studio ``record``
-uses with nothing spoken or filmed, against a small app of their own.
+uses with nothing spoken or filmed, against a small app of their own. They also hold the chapter
+label to its corner and its seconds on every page, the spotlight to coming up where its element is
+and to being down while the page scrolls to the next, a step to scrolling only to what is not in
+view (a control in a sticky top bar is, and Chromium would scroll the page under the bar for it),
+and a paste to one input.
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
@@ -99,8 +103,24 @@ def _other(title: str, head: str = "") -> str:
 """
 
 
+#: A page under a top bar that sticks as it scrolls, as many apps have: a cart in the bar, a line
+#: far down the page, and a box to paste into.
+BAR = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Under a sticky bar</title></head>
+<body style="margin:0;font:16px/1.4 sans-serif">
+  <nav style="position:sticky;top:0;height:56px;background:#eee;z-index:5;display:flex;justify-content:flex-end">
+    <button id="cart" type="button" style="margin:12px 24px">Cart</button>
+  </nav>
+  <div style="height:1500px"></div>
+  <p id="line" style="margin:0 0 0 640px;width:240px;height:40px">A line far down the page</p>
+  <div style="height:1500px"></div>
+  <textarea id="notes" style="margin:24px" oninput="window.inputs = (window.inputs || 0) + 1"></textarea>
+</body></html>
+"""
+
 PAGES = {
     "/": HOME,
+    "/bar": BAR,
     "/b": _other("Page B"),
     "/slow": _other("A slow page"),
     "/done": _other("Posted"),
@@ -182,15 +202,20 @@ def chromium() -> Iterator[str | None]:
     yield path
 
 
-def _rehearse(out: Path, run: Callable[[Studio], Awaitable[None]], chromium: str | None) -> dict[str, Any]:
-    lesson = Lesson(
+def _rehearse(
+    out: Path, run: Callable[[Studio], Awaitable[None]], chromium: str | None, **lesson: Any
+) -> dict[str, Any]:
+    """``run`` rehearsed as a lesson's steps against the site, the lesson's other fields as ``lesson`` says."""
+
+    staged = Lesson(
         page=PAGE,
         title={"kicker": "Pageant", "title": "The studio's steps", "sub": ""},
         narration={},
         run=run,
         app=_Site(),
+        **lesson,
     )
-    return asyncio.run(studio.rehearse(lesson, out, chromium=chromium))
+    return asyncio.run(studio.rehearse(staged, out, chromium=chromium))
 
 
 def _pointer(shown: Mapping[str, Any]) -> tuple[float, float] | None:
@@ -488,3 +513,200 @@ def test_a_rehearsal_stops_at_a_step_the_app_no_longer_has_and_keeps_the_page(
         _rehearse(tmp_path, run, chromium)
 
     assert (tmp_path / FOLDER / "failure.png").stat().st_size > 0
+
+
+#: Where the chapter label is drawn: its text while it is up, and the side of the screen it is on.
+LABEL = """() => {
+  const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
+  const label = root.children[3];
+  const box = label.getBoundingClientRect();
+  return { text: getComputedStyle(label).opacity === "1" ? label.textContent : null,
+    side: box.left + box.width / 2 < innerWidth / 2 ? "left" : "right" };
+}"""
+
+
+def test_the_label_sits_in_its_corner_and_is_on_every_page_until_its_seconds_are_up(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.chapter("1 · Sell")
+        await s.page.wait_for_function(STILL)
+        seen["up"] = await s.page.evaluate(LABEL)
+        await s.click(s.page.locator("#to-b"))
+        await s.arrive("**/b")
+        await s.page.wait_for_function(STILL)
+        seen["on the next page"] = await s.page.evaluate(LABEL)
+
+    _rehearse(tmp_path, run, chromium, label_corner="top-left", label_seconds=30)
+
+    assert seen["up"] == {"text": "1 · Sell", "side": "left"}
+    assert seen["on the next page"] == {"text": "1 · Sell", "side": "left"}
+
+
+def test_the_label_comes_down_when_its_seconds_are_up_and_no_page_after_draws_it(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.chapter("1 · Sell")
+        await s.say("Still speaking.", 0)
+        await asyncio.sleep(1.5)
+        await s.page.wait_for_function(STILL)
+        seen["after its seconds"] = await s.page.evaluate(READ)
+        await s.page.goto(home + "b")
+        await s.arrive("**/b")
+        await s.page.wait_for_function(PAINTED)
+        seen["first frame after"] = await s.page.evaluate("window.firstFrame")
+        # Read once it has faded in, which is well inside its second.
+        await s.chapter("2 · Get paid")
+        await s.page.wait_for_function(STILL)
+        seen["the next chapter"] = await s.page.evaluate(READ)
+
+    _rehearse(tmp_path, run, chromium, label_seconds=1.0)
+
+    assert (seen["after its seconds"]["label"], seen["after its seconds"]["caption"]) == (None, "Still speaking.")
+    assert seen["first frame after"]["label"] is None
+    assert seen["the next chapter"]["label"] == "2 · Get paid"
+
+
+def test_the_label_stays_up_until_the_next_chapter_unless_the_lesson_says(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.chapter("1 · Sell")
+        await asyncio.sleep(0.8)
+        await s.page.wait_for_function(STILL)
+        seen["later"] = await s.page.evaluate(LABEL)
+
+    _rehearse(tmp_path, run, chromium)
+
+    assert seen["later"] == {"text": "1 · Sell", "side": "right"}
+
+
+def test_the_spotlight_comes_up_where_its_element_is_rather_than_sliding_there(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    # The spotlight in the first frame after it is put on the line, against the line's own box.
+    spot_and_read = """(el) => new Promise((done) => {
+      window.__demo.spot(el, 8);
+      requestAnimationFrame(() => {
+        const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+        const spot = getComputedStyle(root.children[0]), box = el.getBoundingClientRect();
+        done({ left: parseFloat(spot.left), top: parseFloat(spot.top), boxLeft: box.left - 8, boxTop: box.top - 8 });
+      });
+    })"""
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        line = s.page.locator("#line")
+        await line.evaluate("el => el.scrollIntoView({ block: 'center' })")
+        seen["on a page just opened"] = await line.evaluate(spot_and_read)
+
+    _rehearse(tmp_path, run, chromium)
+
+    first = seen["on a page just opened"]
+    assert first["left"] == pytest.approx(first["boxLeft"], abs=1), "not from the screen's corner"
+    assert first["top"] == pytest.approx(first["boxTop"], abs=1)
+
+
+def test_a_step_does_not_scroll_to_what_is_in_view_and_scrolls_to_what_the_bar_or_the_captions_cover(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    middle = "() => { const r = document.querySelector('#line').getBoundingClientRect(); return r.top + r.height / 2; }"
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        line = s.page.locator("#line")
+        await line.evaluate("el => el.scrollIntoView({ block: 'center' })")
+        seen["before"] = await s.page.evaluate("scrollY")
+        # In the bar, which Chromium would scroll the page under to bring nearer.
+        await s.glide(s.page.locator("#cart"))
+        seen["after the cart"] = await s.page.evaluate("scrollY")
+        await s.spot(line)
+        seen["after the line, in view"] = await s.page.evaluate("scrollY")
+        await s.spot(None)
+        # Under the bar, then in the band at the foot of the screen that captions cover.
+        for where, top in (("under the bar", "20"), ("under the captions", "innerHeight - 70")):
+            await line.evaluate(f"el => window.scrollTo(0, el.offsetTop - ({top}))")
+            await s.glide(line)
+            seen[where] = await s.page.evaluate(middle)
+        seen["height"] = await s.page.evaluate("innerHeight")
+
+    _rehearse(tmp_path, run, chromium)
+
+    assert seen["after the cart"] == seen["before"], "a control in a sticky bar does not scroll the page"
+    assert seen["after the line, in view"] == seen["before"]
+    assert seen["under the bar"] == pytest.approx(seen["height"] / 2, abs=4), "scrolled to the middle"
+    assert seen["under the captions"] == pytest.approx(seen["height"] / 2, abs=4)
+
+
+def test_paste_puts_the_text_in_at_once_and_keeps_its_new_lines(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+    line = "A line as long as a buyer's message would be, pasted rather than typed out key by key."
+    lines = "A line pasted in.\nAnd a second one, on a line of its own."
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        notes = s.page.locator("#notes")
+        await s.paste(notes, line)
+        seen["one line"] = (await notes.input_value(), await s.page.evaluate("window.inputs"))
+        await notes.fill("")
+        await s.paste(notes, lines)
+        seen["two lines"] = await notes.input_value()
+
+    _rehearse(tmp_path, run, chromium)
+
+    assert seen["one line"] == (line, 1), "one input, where typing it is one a key"
+    assert seen["two lines"] == lines
+
+
+def test_a_spotlight_moving_to_an_element_out_of_view_is_down_while_the_page_scrolls_there(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    # On every scroll event, whether the spotlight is up or on its way down.
+    watch = """() => {
+      const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+      window.spotWhileScrolling = [];
+      addEventListener("scroll", () => window.spotWhileScrolling.push(root.children[0].style.opacity));
+    }"""
+    landed = """() => {
+      const root = [...document.documentElement.children].find((e) => e.style.zIndex === "2147483000");
+      const spot = root.children[0], box = document.querySelector("#line").getBoundingClientRect();
+      return { up: spot.style.opacity, left: parseFloat(getComputedStyle(spot).left) - (box.left - 8),
+        top: parseFloat(getComputedStyle(spot).top) - (box.top - 8) };
+    }"""
+
+    async def run(s: Studio) -> None:
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "bar")
+        await s.arrive("**/bar")
+        await s.spot(s.page.locator("#cart"))
+        await s.page.evaluate(watch)
+        await s.spot(s.page.locator("#line"))
+        seen["while scrolling"] = set(await s.page.evaluate("window.spotWhileScrolling"))
+        seen["landed"] = await s.page.evaluate(landed)
+
+    _rehearse(tmp_path, run, chromium)
+
+    assert seen["while scrolling"] == {"0"}, "down before the page moved, not trailing the cart"
+    assert seen["landed"] == {"up": "1", "left": pytest.approx(0, abs=1), "top": pytest.approx(0, abs=1)}

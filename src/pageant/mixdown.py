@@ -2,8 +2,9 @@
 
 Each narration clip is levelled to the same loudness and starts where its caption appears;
 the music (``music.py``) ducks under the voice, about 10 dB under it in a pause and about
-15 dB under it while it speaks; the mix is normalised to -16 LUFS, the level web players
-expect, its peaks aimed 2 dB under full scale, and muxed beside the untouched picture.
+15 dB under it while it speaks. The mix is then set to the lesson's loudness in two passes
+(``loudness.py``): -16 LUFS, the level web players expect, unless the lesson says otherwise,
+its peaks kept 2 dB under full scale, and muxed beside the untouched picture.
 """
 
 from __future__ import annotations
@@ -15,19 +16,18 @@ from pathlib import Path
 
 import numpy as np
 
-from pageant import music
+from pageant import loudness, music
 
 RATE = 48_000
 VOICE_RMS_DB = -20.0
 
-#: The music's level, and how far the voice ducks it.
+#: The music's level, and how far the voice ducks it: the narration, the music and the clicks, in that order.
 GRAPH = (
-    "[1:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[voice][key];"
-    "[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.14[bed];"
+    "[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[voice][key];"
+    "[1:a]aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.14[bed];"
     "[bed][key]sidechaincompress=threshold=0.05:ratio=4:attack=40:release=700[ducked];"
-    "[3:a]aformat=sample_fmts=fltp:channel_layouts=stereo[click];"
-    "[voice][ducked][click]amix=inputs=3:normalize=0:duration=first,"
-    "loudnorm=I=-16:TP=-2:LRA=11,aresample=48000[mix]"
+    "[2:a]aformat=sample_fmts=fltp:channel_layouts=stereo[click];"
+    "[voice][ducked][click]amix=inputs=3:normalize=0:duration=first[mix]"
 )
 
 
@@ -74,9 +74,15 @@ def place(track: np.ndarray, sound: np.ndarray, at: float) -> None:
 
 
 def mix(
-    voice: Sequence[tuple[float, Path]], clicks: Sequence[float], seconds: float, picture: Path, out: Path, work: Path
+    voice: Sequence[tuple[float, Path]],
+    clicks: Sequence[float],
+    seconds: float,
+    picture: Path,
+    out: Path,
+    work: Path,
+    target: float = loudness.WEB,
 ) -> None:
-    """``out``: ``picture`` with the narration clips at their times, the clicks, and the music."""
+    """``out``: ``picture`` with the narration clips at their times, the clicks, and the music, at ``target`` LUFS."""
 
     total = int(seconds * RATE) + RATE
     narration = np.zeros(total)
@@ -93,22 +99,40 @@ def mix(
     write_wav(work / "narration.wav", narration)
     write_wav(work / "clicks.wav", clicking)
     music.write(work / "music.wav", seconds + 1)
+    mixed = work / "mix.wav"
+    # Kept in floating point until it is levelled, so a sum over full scale is not clipped first.
     ffmpeg(
-        *("-i", str(picture), "-i", str(work / "narration.wav")),
-        *("-i", str(work / "music.wav"), "-i", str(work / "clicks.wav")),
-        *("-filter_complex", GRAPH, "-map", "0:v", "-map", "[mix]"),
-        *("-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(out)),
+        *("-i", str(work / "narration.wav"), "-i", str(work / "music.wav"), "-i", str(work / "clicks.wav")),
+        *("-filter_complex", GRAPH, "-map", "[mix]", "-c:a", "pcm_f32le", str(mixed)),
+    )
+    report = ffmpeg_report("-i", str(mixed), "-af", loudness.first_pass(target), "-f", "null", "-")
+    level = loudness.second_pass(target, loudness.measured(report))
+    ffmpeg(
+        *("-i", str(picture), "-i", str(mixed), "-af", f"{level},aresample=48000"),
+        *("-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"),
+        *("-shortest", "-movflags", "+faststart", str(out)),
     )
 
 
 def ffmpeg(*arguments: str) -> None:
     """Run ffmpeg quietly, overwriting its output; a failure raises, with what ffmpeg said."""
 
+    _run("error", arguments)
+
+
+def ffmpeg_report(*arguments: str) -> str:
+    """Run ffmpeg and answer what it reported, which is where a measuring filter prints what it found."""
+
+    return _run("info", arguments)
+
+
+def _run(level: str, arguments: Sequence[str]) -> str:
     done = subprocess.run(  # noqa: S603 -- ffmpeg, with arguments these modules spell
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments],  # noqa: S607 -- the ffmpeg on PATH
+        ["ffmpeg", "-y", "-hide_banner", "-nostats", "-loglevel", level, *arguments],  # noqa: S607 -- the ffmpeg on PATH
         capture_output=True,
         text=True,
         check=False,
     )
     if done.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {done.stderr.strip()}")
+    return done.stderr
