@@ -173,7 +173,11 @@ flicker open on the way.
 
 While a page fetches, its time waits for the answer, so a page loads in the video in the frames its
 scripts take, not the seconds its server does; a fetch that never ends (a stream, a long poll) is
-let run past after two seconds of waiting. A frame the same as the one before is not written again.
+let run past after two seconds of waiting. A page on another site (a payment provider's checkout,
+and the app it sends the buyer back to) gets a renderer of its own, whose clock Chromium starts at
+the machine's time, far ahead of a recording's frames; the film moves its frames' times on to a
+tenth of a second short of that page's, so its fades and menus run as they do anywhere else. A
+frame the same as the one before is not written again.
 Recording takes the headless shell, `chrome-headless-shell`, which `playwright install chromium`
 installs beside Chromium; `--chromium` names one already installed. A Chromium that is not one
 stops the recording with that said.
