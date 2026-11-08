@@ -144,10 +144,20 @@ SHIFTING = """<!doctype html>
 </body></html>
 """
 
+#: A page that opens a request its server never answers while the test runs, as a stream or a long poll does.
+HANGING = """<!doctype html>
+<html><head><meta charset="utf-8"><title>A page that keeps a request open</title></head>
+<body style="margin:0;padding:24px;font:16px/1.4 sans-serif">
+  <p>Listening.</p>
+  <script>fetch("/never").catch(() => {}); window.asked = true;</script>
+</body></html>
+"""
+
 PAGES = {
     "/": HOME,
     "/bar": BAR,
     "/shifting": SHIFTING,
+    "/hanging": HANGING,
     "/b": _other("Page B"),
     "/slow": _other("A slow page"),
     "/done": _other("Posted"),
@@ -165,6 +175,9 @@ class _Pages(BaseHTTPRequestHandler):
         if path in {"/slow", "/stall.js"}:
             # Long enough for the steps after the click to run while it loads.
             time.sleep(0.6)
+        if path == "/never":
+            # Longer than the test that asked for it runs; the server's threads are daemons.
+            time.sleep(60)
         body = "window.stalled = true;\n" if path == "/stall.js" else PAGES.get(path)
         if body is None:
             self.send_error(404)
@@ -805,6 +818,27 @@ def test_a_click_lands_on_its_element_when_the_page_moves_it_while_the_pointer_i
     assert seen["moved"] == pytest.approx(40, abs=0.5), "the banner came in while the pointer was on its way"
     assert seen["clicked"] == "target"
     assert seen["mouse"] == pytest.approx(seen["middle"], abs=0.5)
+
+
+def test_a_request_that_never_ends_costs_the_film_one_wait_rather_than_one_a_frame(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.goto(s.page.url + "hanging")
+        await s.page.wait_for_function("window.asked === true")
+        started = time.monotonic()
+        await s.film.frames(30)
+        seen.update(took=time.monotonic() - started, stuck=s.film.stuck())
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["stuck"], "the request was still open"
+    # One wait of STUCK for the frame that first held it, then frames at the film's own pace; one wait
+    # a frame would be a minute.
+    assert seen["took"] < film.STUCK + 4
 
 
 def test_a_cards_points_come_up_one_at_a_time_as_its_line_says_them(tmp_path: Path, chromium: str | None) -> None:

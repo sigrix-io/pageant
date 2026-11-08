@@ -9,7 +9,9 @@ recording made on a slow computer moves exactly as one made on a fast one, only 
 
 While a page fetches, its time waits for the answer, so a page loads in the film in the frames
 its scripts take rather than in the seconds its server does; a fetch that never ends (a stream, a
-long poll) is let run past after ``STUCK`` seconds of waiting, so it cannot hold the film for ever.
+long poll) is let run past after ``STUCK`` seconds of waiting, so it cannot hold the film for ever,
+and while a fetch that has been open that long is still open, the page's time runs on without
+waiting for fetches at all, so it costs the film one wait rather than one a frame.
 
 The film paints from before the first page loads to the end of the recording: a page's scripts,
 its loads and Playwright's own waits all need frames. It writes them to its folder only while it
@@ -110,6 +112,8 @@ class Film:
     _asked: bool = field(default=False, init=False, repr=False)
     _picture: bytes = field(default=b"", init=False, repr=False)
     _kept: bytes = field(default=b"", init=False, repr=False)
+    #: The page's requests not yet answered, by id, with the machine's time each was sent at.
+    _open: dict[str, float] = field(default_factory=dict, init=False, repr=False)
 
     def clock(self) -> float:
         return self.count / FPS
@@ -118,6 +122,10 @@ class Film:
         """Hold the page's time, and start painting a frame for each frame's worth of it."""
 
         await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "pause"})
+        self.cdp.on("Network.requestWillBeSent", self._sent)
+        self.cdp.on("Network.loadingFinished", self._answered)
+        self.cdp.on("Network.loadingFailed", self._answered)
+        await self.cdp.send("Network.enable")
         # Chromium's frame times are milliseconds of the machine's monotonic clock, as Python's are.
         self._base = time.monotonic() * 1000
         await self._paint_one()
@@ -166,8 +174,26 @@ class Film:
             tick, self._tick = self._tick, asyncio.Event()
             tick.set()
 
+    def _sent(self, event: dict[str, Any]) -> None:
+        # A redirect is sent again under the same id: it is still the one request, open since the first.
+        self._open.setdefault(str(event.get("requestId")), time.monotonic())
+
+    def _answered(self, event: dict[str, Any]) -> None:
+        self._open.pop(str(event.get("requestId")), None)
+
+    def stuck(self) -> bool:
+        """Whether a request the page made has been open longer than ``STUCK``: a stream, a long poll."""
+
+        now = time.monotonic()
+        return any(now - sent > STUCK for sent in self._open.values())
+
     async def _advance(self) -> None:
-        """Move the page's time on by a frame, waiting for what it is fetching, but not for ever."""
+        """Move the page's time on by a frame, waiting for what it is fetching, but not for ever.
+
+        While a request is stuck (``stuck``), the time runs on without waiting for fetches at all:
+        Chromium waits for every fetch or none, and one that never ends would cost every frame
+        ``STUCK`` seconds.
+        """
 
         loop = asyncio.get_running_loop()
         expired: asyncio.Future[None] = loop.create_future()
@@ -178,6 +204,10 @@ class Film:
 
         self.cdp.once("Emulation.virtualTimeBudgetExpired", done)
         budget = 1000 / FPS
+        if self.stuck():
+            await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": "advance", "budget": budget})
+            await expired
+            return
         await self.cdp.send(
             "Emulation.setVirtualTimePolicy", {"policy": "pauseIfNetworkFetchesPending", "budget": budget}
         )

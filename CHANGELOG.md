@@ -71,6 +71,12 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A request a page keeps open (a stream, a long poll) cost the film `STUCK` seconds on every frame, so a
+  page change's view transition could take half a minute and a click land on a page still in it. The film
+  now watches its page's requests (CDP `Network`), and while one has been open longer than `STUCK`, the
+  page's time runs on without waiting for fetches, so it costs one wait.
+- A click pressed where its element was when the pointer set off, so one the page moved on the way (a
+  banner coming in above it) was missed. It is pressed where the element is when the mouse goes down.
 - A lesson that goes from page to page keeps what is on screen. The overlay starts afresh in each
   document a page loads, so after a click on a link, a form post or a server redirect, the next
   page had no chapter label and no caption, and drew the pointer at the middle of the screen until
