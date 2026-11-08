@@ -80,6 +80,13 @@ CAPTION_BAND = 125
 #: How far, in CSS pixels, an element may have moved by the time the mouse goes down before the
 #: pointer goes after it (``Studio.click``).
 AIM = 3.0
+#: How many frames a step waits for a view transition to end before it skips it (``Studio.glide``):
+#: a page change's fades last a fraction of a second, and Chromium gives up on one after four.
+TRANSITION_FRAMES = 90
+#: How long a step's own waits for the page (Playwright's) may take, in the machine's seconds: the
+#: page moves only as frames are painted, which a busy machine paints more slowly, so the 30 s
+#: Playwright's waits default to is the machine's time, not the film's, and too short.
+WAIT_SECONDS = 180
 #: Whether an element is in view already, so a step that points at it does not scroll there: all of
 #: it on screen, and either in a bar that stays put as the page scrolls (fixed, or sticky, which
 #: Chromium scrolls the page under rather than bring it nearer) or above the captions with nothing
@@ -579,10 +586,21 @@ class Studio:
             await self._look(camera.framing(framed, most, band=CAPTION_BAND))
         await self.sleep(450)
 
+    async def _transitioned(self) -> None:
+        """Wait out a view transition the page is in, as a person does: until it ends, the page takes
+        no clicks (it hit-tests as ``<html>``). One still running after ``TRANSITION_FRAMES`` is skipped."""
+
+        for _ in range(TRANSITION_FRAMES):
+            if not await self.page.evaluate("() => !!(window.__demo && window.__demo.transitioning())"):
+                return
+            await self.film.frames(1)
+        await self.page.evaluate("() => window.__demo && window.__demo.skipTransition()")
+
     async def glide(self, locator: Locator) -> None:
         """Move the cursor to the middle of ``locator`` as a hand would, not in one jump, once the
-        page has stopped scrolling to it."""
+        page has stopped scrolling to it, and once a view transition the page is in is over."""
 
+        await self._transitioned()
         if not await locator.evaluate(IN_VIEW):
             # The page is about to scroll under the camera: back out to the whole screen first.
             await self._look(WHOLE, wait=True)
@@ -758,6 +776,7 @@ async def _staged(
             context = await browser.new_context(viewport=None, color_scheme=lesson.color_scheme)
             await context.add_init_script(path=HERE / "overlay.js")
             page = await context.new_page()
+            page.set_default_timeout(WAIT_SECONDS * 1000)
             # The film paints from before the first page loads: a page loads only as frames are painted.
             film = Film(await context.new_cdp_session(page), frames)
             studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal)

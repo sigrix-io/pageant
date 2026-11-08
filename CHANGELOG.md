@@ -71,6 +71,11 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A step on a page still in its view transition (an app's CSS `@view-transition`) was swallowed: until
+  the transition ends, the page hit-tests as `<html>`. A step now waits for it, as a person does, and
+  skips one still running after `TRANSITION_FRAMES` (1.5 s), through the handle the page was
+  revealed with. A step's own waits for the page (Playwright's) take up to `WAIT_SECONDS` (180) of the
+  machine's time, not 30: the page moves only as frames are painted, which a busy machine paints slower.
 - A request a page keeps open (a stream, a long poll) cost the film `STUCK` seconds on every frame, so a
   page change's view transition could take half a minute and a click land on a page still in it. The film
   now watches its page's requests (CDP `Network`), and while one has been open longer than `STUCK`, the

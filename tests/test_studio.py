@@ -153,11 +153,35 @@ HANGING = """<!doctype html>
 </body></html>
 """
 
+
+def _transitioning(name: str, seconds: float, body: str) -> str:
+    """A page that changes to the next with a view transition lasting ``seconds``, as an app's can."""
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>{name}</title>
+<style>@view-transition {{ navigation: auto; }}
+::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {{ animation-duration: {seconds}s; }}</style>
+</head><body style="margin:0;padding:24px;font:16px/1.4 sans-serif">{body}</body></html>
+"""
+
+
 PAGES = {
     "/": HOME,
     "/bar": BAR,
     "/shifting": SHIFTING,
     "/hanging": HANGING,
+    **{
+        f"/fade-{seconds}": _transitioning("Before", seconds, f'<a id="go" href="/faded-{seconds}">Next</a>')
+        for seconds in (1.4, 4)
+    },
+    **{
+        f"/faded-{seconds}": _transitioning(
+            "After",
+            seconds,
+            '<button id="hit" type="button" onclick="window.hits = (window.hits || 0) + 1">Hit</button>',
+        )
+        for seconds in (1.4, 4)
+    },
     "/b": _other("Page B"),
     "/slow": _other("A slow page"),
     "/done": _other("Posted"),
@@ -839,6 +863,31 @@ def test_a_request_that_never_ends_costs_the_film_one_wait_rather_than_one_a_fra
     # One wait of STUCK for the frame that first held it, then frames at the film's own pace; one wait
     # a frame would be a minute.
     assert seen["took"] < film.STUCK + 4
+
+
+@pytest.mark.parametrize("seconds", [1.4, 4], ids=["waited out", "skipped"])
+def test_a_step_on_a_page_still_in_its_view_transition_waits_for_it_or_skips_it(
+    tmp_path: Path, chromium: str | None, seconds: float
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.goto(f"{s.page.url}fade-{seconds}")
+        await s.click(s.page.locator("#go"))
+        await s.arrive(f"**/faded-{seconds}")
+        seen["in it"] = await s.page.evaluate("() => document.documentElement.matches(':active-view-transition')")
+        before = s.film.count
+        await s.click(s.page.locator("#hit"))
+        seen.update(hit=await s.page.evaluate("window.hits || 0"), frames=s.film.count - before)
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["in it"], "the page arrived in its transition, which takes no clicks"
+    assert seen["hit"] == 1
+    if seconds == 4:
+        # Skipped once the step had waited TRANSITION_FRAMES for it, well short of its four seconds.
+        assert seen["frames"] < 4 * 60
 
 
 def test_a_cards_points_come_up_one_at_a_time_as_its_line_says_them(tmp_path: Path, chromium: str | None) -> None:

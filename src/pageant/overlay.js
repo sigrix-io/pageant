@@ -175,8 +175,15 @@
     ui.ripple.animate([{ opacity: 0.95, transform: "scale(.35)" }, { opacity: 0, transform: "scale(1.5)" }],
       { duration: 520, easing: "ease-out" });
   }, true);
+  // A page an app opens with a view transition (CSS @view-transition) takes no clicks until the
+  // transition is over: until then the page hit-tests as <html>. The studio waits for it, and skips
+  // one that runs long, through the handle the new page is revealed with.
+  let transition = null;
+  window.addEventListener("pagereveal", (event) => { transition = event.viewTransition || null; });
   window.__demo = {
     ready: ensure,
+    transitioning() { return document.documentElement.matches(":active-view-transition"); },
+    skipTransition() { if (transition) transition.skipTransition(); },
     // What is on screen, as the studio keeps it: { label, corner, caption, card, at }. On a page the
     // studio has not drawn yet, all of it is drawn at once; on one it has, only what changed is
     // drawn, as the calls below draw it. The pointer is put at `at` until the page sees it move.
