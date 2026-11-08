@@ -21,7 +21,7 @@ PROBE = """
 import json, sys
 import pageant
 import pageant.apps, pageant.bundle, pageant.cli, pageant.timeline, pageant.youtube
-import pageant.loudness, pageant.pronounce
+import pageant.camera, pageant.loudness, pageant.pronounce
 pageant.cli._parser().parse_args(["pack", "pages.py"])
 print(json.dumps(sorted(sys.modules)))
 """

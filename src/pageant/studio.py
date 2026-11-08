@@ -1,13 +1,15 @@
 """Record a lesson as code: the real app in a real browser, with a voice, captions and chapters.
 
 A lesson is a storyboard: a table of what it says, and its steps, each a highlight, a click or a
-caption. The studio starts the lesson's app (``apps.py``), opens it in Chromium at 1280x720 CSS
-pixels and a device scale of 1.5, so frames are 1920x1080 and text is sharp, draws the cursor,
-spotlight, captions and cards over the page (``overlay.js``), and captures every painted frame over
-CDP. It writes a folder of the lesson's own in the output folder, named by its page, which is the
-lesson's bundle (``bundle.py``):
+caption. The studio starts the lesson's app (``apps.py``), opens it in Chromium's headless shell at
+1280x720 CSS pixels and a device scale of 1.5, so frames are 1920x1080 and text is sharp, draws the
+cursor, spotlight, captions and cards over the page (``overlay.js``), and paints every frame of the
+video itself, 60 a second, on a clock it keeps (``film.py``): every motion in it, the pointer's, a
+scroll's, a fade's, is as even on a slow machine as on a fast one. A lesson that lets it zooms
+in on what each spotlight shows (``Lesson.zoom``, ``camera.py``). It writes a folder of the
+lesson's own in the output folder, named by its page, which is the lesson's bundle (``bundle.py``):
 
-- ``video.mp4``: H.264 and AAC at 1080p and 30 fps, with its chapters as markers;
+- ``video.mp4``: H.264 and AAC at 1080p and 60 fps, with its chapters as markers;
 - ``cover.jpg``: the poster, which is the title card;
 - ``captions.vtt``: the captions, every line spoken;
 - ``chapters.vtt`` and ``chapters.txt``: the chapters, for a web page's player and for a
@@ -30,7 +32,6 @@ recording spends its minutes on it.
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import json
 import math
@@ -49,11 +50,13 @@ from typing import Any, Literal
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import FloatRect, Frame, Locator, Page, async_playwright
 
-from pageant import apps, bundle, loudness, mixdown, narrate, timeline
+from pageant import apps, bundle, camera, loudness, mixdown, narrate, timeline
 from pageant.apps import App, Running
+from pageant.camera import HEIGHT, WHOLE, WIDTH, View
+from pageant.film import CROP, FLAGS, FPS, Film, concat
 
 HERE = Path(__file__).resolve().parent
-WIDTH, HEIGHT, SCALE = 1280, 720, 1.5
+SCALE = 1.5
 #: A voice starts a moment after its caption fades in, and the next line waits a breath after it.
 VOICE_LEAD = 0.25
 VOICE_GAP = 0.45
@@ -69,6 +72,9 @@ DRAW_ATTEMPTS = 3
 REHEARSAL_WAIT = 0.25
 #: How long the spotlight takes to fade out, in seconds (``overlay.js``).
 SPOT_FADE = 0.35
+#: How long, in real seconds, a frame waits for the page to draw the pointer and the camera before it
+#: is painted without them.
+HOOK_WAIT = 1.0
 #: The foot of the screen a caption of two lines covers, in CSS pixels.
 CAPTION_BAND = 125
 #: Whether an element is in view already, so a step that points at it does not scroll there: all of
@@ -130,6 +136,9 @@ class Lesson:
     #: The mix's loudness in LUFS (``loudness.py``): -16, what web players expect, or -14, what YouTube
     #: plays every video at.
     loudness: float = loudness.WEB
+    #: How far the camera may zoom in on what a spotlight shows: 1, the default, never zooms; 2 shows
+    #: it up to twice as large (``camera.py``). The captions, the label and the cards keep their size.
+    zoom: float = 1.0
 
     @property
     def slug(self) -> str:
@@ -190,6 +199,9 @@ class Studio:
     lesson: Lesson
     clips: Mapping[str, narrate.Clip]
     work: Path
+    #: The frames, and the clock the studio keeps by them (``film.py``).
+    film: Film
+    #: When the video starts, in seconds of film.
     started: float = 0.0
     captions: list[_Caption] = field(default_factory=list)
     spoken_only: list[timeline.Cue] = field(default_factory=list)
@@ -216,20 +228,97 @@ class Studio:
     _label_down: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _carrying: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _drawing: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    #: The pointer on its way somewhere: its points, a frame each, from the frame after this one.
+    _reaching: tuple[list[tuple[float, float]], int] | None = field(default=None, init=False, repr=False)
+    #: Where the camera looks, and its move: from one view to another, from a frame, over so many frames.
+    _view: View = field(default=WHOLE, init=False, repr=False)
+    _move: tuple[View, View, int, int] | None = field(default=None, init=False, repr=False)
+    #: The view the overlay was last drawn for, so a still camera on the whole screen costs no call a
+    #: frame; ``None`` when a draw went unanswered, so the next frame draws again.
+    _drawn_for: View | None = field(default=WHOLE, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.page.on("framenavigated", self._went)
 
     def clock(self) -> float:
-        return time.time() - self.started
+        """Seconds since the video started, on the film's clock."""
+
+        return self.film.clock() - self.started
 
     async def sleep(self, ms: float) -> None:
         await self._wait(ms / 1000)
 
     async def _wait(self, seconds: float) -> None:
-        """Wait, as a recording does; a rehearsal waits ``REHEARSAL_WAIT`` at most."""
+        """Wait, as a recording does, in frames; a rehearsal waits ``REHEARSAL_WAIT`` at most."""
 
-        await asyncio.sleep(min(seconds, REHEARSAL_WAIT) if self.rehearsal else seconds)
+        await self.film.seconds(min(seconds, REHEARSAL_WAIT) if self.rehearsal else seconds)
+
+    async def _frame(self, number: int) -> None:
+        """Before frame ``number`` is painted: the pointer's next point on its way, and where the camera looks.
+
+        Run by the film before every frame, so a pointer moves a point a frame and a camera a step a
+        frame, however long the steps around them take. It talks to the page over the film's own
+        connection, which waits for no page to load, so a frame is never held up by one.
+        """
+
+        point = None
+        if self._reaching is not None:
+            points, first = self._reaching
+            index = number - first - 1
+            if 0 <= index < len(points):
+                point = points[index]
+        view = self._view_at(number)
+        if point is None and view == WHOLE and self._drawn_for == WHOLE:
+            self.film.clip = None
+            return
+        script = (
+            "(() => { const demo = window.__demo; if (!demo) return null;"
+            + (f" demo.point({point[0]}, {point[1]});" if point else "")
+            + f" return demo.camera({view.x}, {view.y}, {view.scale}); }})()"
+        )
+        try:
+            # A page between documents can leave the call unanswered until a frame is painted, which
+            # this call is holding up: that frame is painted whole instead.
+            answer = await asyncio.wait_for(
+                self.film.cdp.send("Runtime.evaluate", {"expression": script, "returnByValue": True}), HOOK_WAIT
+            )
+            scroll = answer.get("result", {}).get("value")
+        except (PlaywrightError, TimeoutError):
+            scroll = None
+        self._drawn_for = view if scroll is not None else None
+        if view == WHOLE or scroll is None:
+            self.film.clip = None
+        else:
+            left, top = scroll
+            self.film.clip = {"x": view.x + left, "y": view.y + top, "width": view.width, "height": view.height}
+
+    def _view_at(self, number: int) -> View:
+        """Where the camera looks in frame ``number``: still, or part of the way through a move."""
+
+        if self._move is not None:
+            start, end, first, frames = self._move
+            if number >= first + frames:
+                self._view, self._move = end, None
+            else:
+                return camera.between(start, end, (number - first) / frames)
+        return self._view
+
+    async def _look(self, view: View, *, wait: bool = False) -> None:
+        """Move the camera to ``view`` over ``camera.MOVE_SECONDS``, from wherever it is; ``wait`` for it to get there."""
+
+        first = self.film.hooked
+        now = self._view_at(first + 1)
+        if now == view and self._move is None:
+            return
+        frames = camera.frames_for(camera.MOVE_SECONDS, FPS)
+        self._move = (now, view, first, frames)
+        if wait:
+            await self.film.until(first + frames)
+
+    def _cut(self, view: View) -> None:
+        """Show ``view`` from the next frame, with no move: a page that changed, a card, the terminal."""
+
+        self._view, self._move = view, None
 
     def _screen(self) -> dict[str, Any]:
         """What is on screen, as ``overlay.js`` draws it: the label, the caption, the card, and the pointer."""
@@ -290,6 +379,8 @@ class Studio:
 
         if frame.parent_frame is not None:
             return
+        # A new page is a cut: it starts on the whole screen, whatever the last one was zoomed to.
+        self._cut(WHOLE)
         drawing = asyncio.ensure_future(self._show_quietly())
         self._drawing.add(drawing)
         drawing.add_done_callback(self._drawing.discard)
@@ -310,6 +401,8 @@ class Studio:
 
         if spec is not None and self.lesson.mark is not None and "mark" not in spec:
             spec = {**spec, "mark": self.lesson.mark.url}
+        if spec is not None:
+            self._cut(WHOLE)
         self._card = spec
         await self._show()
         await self.sleep(hold_ms)
@@ -334,10 +427,10 @@ class Studio:
     async def _label_after(self, title: str, seconds: float) -> None:
         """Take the label ``title`` down after ``seconds``, from this page and every page after.
 
-        In real seconds, in a rehearsal too: no step waits for it.
+        In seconds of film, in a rehearsal too: no step waits for it.
         """
 
-        await asyncio.sleep(seconds)
+        await self.film.seconds(seconds)
         if self.label != title:
             return
         self.label = None
@@ -348,7 +441,7 @@ class Studio:
     async def _voice_free(self) -> None:
         """Never two voices at once: a line waits for the one before it, and a breath after."""
 
-        busy = self.voice_until - time.time()
+        busy = self.voice_until - self.clock()
         if busy > 0:
             await self._wait(busy + VOICE_GAP)
 
@@ -356,7 +449,7 @@ class Studio:
         """Start a clip now; how long to wait for it, and the breath after."""
 
         self.spoken.append((self.clock() + VOICE_LEAD, clip.file))
-        self.voice_until = time.time() + VOICE_LEAD + clip.seconds
+        self.voice_until = self.clock() + VOICE_LEAD + clip.seconds
         return VOICE_LEAD + clip.seconds + VOICE_GAP
 
     def _close_caption(self) -> None:
@@ -413,46 +506,76 @@ class Studio:
 
         if not await locator.evaluate(IN_VIEW):
             await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
-        until = time.monotonic() + SETTLE_CAP
+        until = self.film.clock() + SETTLE_CAP
         await self.sleep(pause_ms - SETTLE_POLL * 1000)
         box = await locator.bounding_box()
         while True:
-            await asyncio.sleep(SETTLE_POLL)
+            await self.film.seconds(SETTLE_POLL)
             then, box = box, await locator.bounding_box()
-            if _held(then, box) or time.monotonic() >= until:
+            if _held(then, box) or self.film.clock() >= until:
                 return box
 
-    async def spot(self, locator: Locator | None, padding: float = 8) -> None:
+    async def spot(self, locator: Locator | None, padding: float = 8, zoom: float | None = None) -> None:
         """Dim the page around ``locator``, scrolled into view; ``None`` lifts the spotlight.
 
         A spotlight already up on another element is taken down before the page scrolls to one out
         of view, rather than trailing its element off the screen and sliding across to the new one;
-        the new one comes up where it lands.
+        the new one comes up where it lands. With ``Lesson.zoom``, or ``zoom`` for this one, the
+        camera moves in on it (``camera.framing``), and it moves back out when the spotlight lifts
+        or the page has to scroll to the next.
         """
 
         if locator is None:
             await self._on_page("() => window.__demo.spot(null)")
+            await self._look(WHOLE)
             return
-        if not await locator.evaluate(IN_VIEW) and await self.page.evaluate("() => window.__demo.spot(null)"):
-            await self.sleep(SPOT_FADE * 1000)
-        await self._scroll_to(locator, 550)
+        if not await locator.evaluate(IN_VIEW):
+            await self._look(WHOLE, wait=True)
+            if await self.page.evaluate("() => window.__demo.spot(null)"):
+                await self.sleep(SPOT_FADE * 1000)
+        box = await self._scroll_to(locator, 550)
         await locator.evaluate("(el, padding) => window.__demo.spot(el, padding)", padding)
+        most = self.lesson.zoom if zoom is None else zoom
+        if box is not None and most > 1:
+            framed = (box["x"] - padding, box["y"] - padding, box["width"] + 2 * padding, box["height"] + 2 * padding)
+            await self._look(camera.framing(framed, most, band=CAPTION_BAND))
         await self.sleep(450)
 
     async def glide(self, locator: Locator) -> None:
         """Move the cursor to the middle of ``locator`` as a hand would, not in one jump, once the
         page has stopped scrolling to it."""
 
+        if not await locator.evaluate(IN_VIEW):
+            # The page is about to scroll under the camera: back out to the whole screen first.
+            await self._look(WHOLE, wait=True)
         box = await self._scroll_to(locator, 450)
         if box is None:
             raise RuntimeError(f"{locator} is not on the page")
         x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-        steps = max(14, round(math.hypot(x - self.mouse[0], y - self.mouse[1]) / 14))
-        await self.page.mouse.move(x, y, steps=steps)
-        self.mouse = (x, y)
+        if not self._view_at(self.film.hooked + 1).holds(x, y, margin=24):
+            await self._look(WHOLE, wait=True)
+        await self._reach((x, y))
         # A click here may go to another page, which draws the pointer here from its first frame.
         await self._carry()
         await self.sleep(220)
+
+    async def _reach(self, end: tuple[float, float]) -> None:
+        """Move the pointer to ``end`` along ``camera.path``, a point a frame, then the mouse itself.
+
+        The points are drawn by the overlay, frame by frame (``_frame``); the page sees one mouse
+        move, at the end, so a menu that opens on hover does not flicker open on the pointer's way.
+        """
+
+        points = camera.path(self.mouse, end, FPS)
+        # The first point is drawn in the first frame whose drawing has not begun.
+        first = self.film.hooked
+        self._reaching = (points, first)
+        try:
+            await self.film.until(first + len(points))
+        finally:
+            self._reaching = None
+        await self.page.mouse.move(*end)
+        self.mouse = end
 
     async def click(self, locator: Locator) -> None:
         await self.glide(locator)
@@ -478,6 +601,9 @@ class Studio:
         """Leave the app's page for the terminal, where shell() runs commands, and put the pointer away."""
 
         self.where = where
+        # Whole before the page changes: a zoomed frame's screenshot cannot be taken of a page going away.
+        self._cut(WHOLE)
+        await self.film.frames(1)
         await self.page.goto(self.terminal_url)
         await self.page.wait_for_function("() => window.__term && window.__demo && window.__demo.ready()")
         await self.page.evaluate(
@@ -517,10 +643,16 @@ class Studio:
         """Type as a person does. A new line is Shift+Enter, since Enter often sends."""
 
         await locator.focus()
+        each = max(1, round(delay_ms / 1000 * FPS))
+        first, typed = self.film.count, 0
         for index, line in enumerate(text.split("\n")):
-            if index:
-                await self.page.keyboard.press("Shift+Enter")
-            await locator.press_sequentially(line, delay=delay_ms)
+            for key in (["Shift+Enter"] if index else []) + list(line):
+                if key == "Shift+Enter":
+                    await self.page.keyboard.press(key)
+                else:
+                    await self.page.keyboard.type(key)
+                typed += 1
+                await self.film.until(first + typed * each)
 
     async def paste(self, locator: Locator, text: str) -> None:
         """Put ``text`` in at once, as a paste does: for words too long to watch being typed.
@@ -542,10 +674,12 @@ async def _staged(
     chromium: str | None,
     clips: Mapping[str, narrate.Clip],
     *,
+    frames: Path | None = None,
     rehearsal: bool = False,
 ) -> AsyncIterator[Studio]:
-    """The lesson's app started, its page open in Chromium under the overlay, the lesson's setup run
-    on it, and the studio that drives it.
+    """The lesson's app started, its page open in Chromium's headless shell under the overlay, the
+    film painting its frames (into ``frames`` once it rolls, if given), the lesson's setup run on it,
+    and the studio that drives it.
 
     A step that fails, in the setup or in what the caller runs, keeps the page as ``failure.png`` in
     ``out``; one an earlier run left there is removed first.
@@ -561,19 +695,23 @@ async def _staged(
     threading.Thread(target=files.serve_forever, daemon=True).start()
     try:
         async with async_playwright() as playwright:
-            # The scale is the browser's own, not an emulated one: only then are screencast
-            # frames painted at device pixels (1920x1080) rather than CSS pixels (1280x720).
+            # The scale is the browser's own, not an emulated one: only then are frames painted at
+            # device pixels (1920x1080) rather than CSS pixels (1280x720).
             browser = await playwright.chromium.launch(
                 executable_path=chromium,
-                args=[f"--force-device-scale-factor={SCALE}", f"--window-size={WIDTH},{HEIGHT}"],
+                args=[*FLAGS, f"--force-device-scale-factor={SCALE}", f"--window-size={WIDTH},{HEIGHT}"],
             )
             context = await browser.new_context(viewport=None, color_scheme=lesson.color_scheme)
             await context.add_init_script(path=HERE / "overlay.js")
             page = await context.new_page()
-            studio = Studio(page, lesson, clips, work, rehearsal=rehearsal)
+            # The film paints from before the first page loads: a page loads only as frames are painted.
+            film = Film(await context.new_cdp_session(page), frames)
+            studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal)
+            film.before = studio._frame
             studio.terminal_url = f"http://127.0.0.1:{files.server_address[1]}/"
             studio.shell_env = {**running.env, "PYTHONUNBUFFERED": "1", "TERM": "xterm-256color"}
             try:
+                await film.start()
                 await page.goto(running.address)
                 await page.wait_for_function("() => window.__demo && window.__demo.ready()")
                 if running.ready:
@@ -588,8 +726,9 @@ async def _staged(
                     studio.spoken_only.clear()
                 yield studio
             except Exception:
+                # A screenshot rides on a frame, so it waits for the film, which may have stopped.
                 with contextlib.suppress(Exception):
-                    await page.screenshot(path=failure)
+                    await page.screenshot(path=failure, timeout=10_000)
                 raise
             finally:
                 if studio._label_down is not None:
@@ -597,6 +736,9 @@ async def _staged(
                     studio._label_down.cancel()
                     await asyncio.gather(studio._label_down, return_exceptions=True)
                 await studio._drawn()
+                # A failure of the film's own fails the step that waited on it, which is what is raised.
+                with contextlib.suppress(Exception):
+                    await film.stop()
                 await context.close()
                 await browser.close()
     finally:
@@ -604,52 +746,30 @@ async def _staged(
         running.stop()
 
 
-async def _capture(
-    lesson: Lesson, out: Path, work: Path, chromium: str | None
-) -> tuple[Studio, list[tuple[Path, float]], float]:
-    """Record the lesson's frames into its folder ``out``; the studio's log of it, each frame with when it
-    was painted, and when it stopped."""
+async def _capture(lesson: Lesson, out: Path, work: Path, chromium: str | None) -> tuple[Studio, float]:
+    """Record the lesson's frames into its work folder, and its poster into its folder ``out``; the
+    studio's log of it, and how long the video is, in seconds."""
 
     clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice), lesson.pronounce) if lesson.narration else {}
-    frames_folder = work / "frames"
-    frames_folder.mkdir()
-    frames: list[tuple[Path, float]] = []
-    acks: set[asyncio.Future[Any]] = set()
-    async with _staged(lesson, out, work, chromium, clips) as studio:
-        page = studio.page
-        await page.mouse.move(*studio.mouse)
+    frames = work / "frames"
+    frames.mkdir()
+    async with _staged(lesson, out, work, chromium, clips, frames=frames) as studio:
+        film = studio.film
+        await studio.page.mouse.move(*studio.mouse)
         await studio.card(lesson.title, 700)
-        cdp = await page.context.new_cdp_session(page)
-        # The poster is the title card, taken over CDP as the frames are, at 1920x1080.
-        poster = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 92})
-        (out / bundle.COVER).write_bytes(base64.b64decode(poster["data"]))
-
-        def painted(frame: dict[str, Any]) -> None:
-            file = frames_folder / f"f{len(frames):06d}.jpg"
-            file.write_bytes(base64.b64decode(frame["data"]))
-            frames.append((file, time.time()))
-            ack = asyncio.ensure_future(cdp.send("Page.screencastFrameAck", {"sessionId": frame["sessionId"]}))
-            acks.add(ack)
-            ack.add_done_callback(settled)
-
-        def settled(ack: asyncio.Future[Any]) -> None:
-            # An ack still in flight when the page closes fails; that failure is expected.
-            acks.discard(ack)
-            if not ack.cancelled():
-                ack.exception()
-
-        cdp.on("Page.screencastFrame", painted)
-        studio.started = time.time()
-        await cdp.send(
-            "Page.startScreencast",
-            {"format": "jpeg", "quality": 90, "maxWidth": int(WIDTH * SCALE), "maxHeight": int(HEIGHT * SCALE)},
-        )
+        film.roll()
+        studio.started = film.clock()
+        await film.frames(1)
+        # The poster is the title card: the first frame the film keeps.
+        if film.last_file is None:
+            raise RuntimeError("The film kept no first frame, so there is no poster.")
+        shutil.copyfile(film.last_file, out / bundle.COVER)
         await lesson.run(studio)
         await studio.quiet()
-        await asyncio.sleep(max(0.4, studio.voice_until - time.time() + 0.4))
-        stopped = time.time()
-        await cdp.send("Page.stopScreencast")
-    return studio, frames, stopped
+        await film.seconds(max(0.4, studio.voice_until - studio.clock() + 0.4))
+        film.rolling = False
+        stopped = studio.clock()
+    return studio, stopped
 
 
 async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False) -> dict[str, Any]:
@@ -658,42 +778,35 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
     folder = out / lesson.slug
     folder.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f"{lesson.slug}-", dir=out))
-    studio, frames, stopped = await _capture(lesson, folder, work, chromium)
-    if not frames:
-        raise RuntimeError("The browser painted no frames, so there is nothing to encode.")
+    studio, stopped = await _capture(lesson, folder, work, chromium)
+    shots = studio.film.shots
+    if not shots:
+        raise RuntimeError("The film kept no frames, so there is nothing to encode.")
 
-    # The video's first instant is its first frame's, so every time recorded moves by that much.
-    offset = frames[0][1] - studio.started
-    seconds = stopped - frames[0][1]
-    # Each frame lasts until the next was painted; ffmpeg turns that into a steady 30 fps.
-    concat = []
-    for (file, at), (_, after) in zip(frames, [*frames[1:], (None, stopped)], strict=True):
-        concat += [f"file '{file.as_posix()}'", f"duration {after - at:.3f}"]
-    concat.append(f"file '{frames[-1][0].as_posix()}'")
-    (work / "frames.txt").write_text("\n".join(concat) + "\n", encoding="utf-8")
+    # The film's clock is the video's: each kept frame is 1/FPS of a second, and the studio's times
+    # are counted from the first of them.
+    seconds = sum(shot.frames for shot in shots) / FPS
+    (work / "frames.txt").write_text(concat(shots), encoding="utf-8")
     mp4 = folder / bundle.VIDEO
     picture = work / "picture.mp4" if lesson.narration else mp4
     mixdown.ffmpeg(
-        *("-f", "concat", "-safe", "0", "-i", str(work / "frames.txt"), "-fps_mode", "cfr", "-r", "30"),
+        *("-f", "concat", "-safe", "0", "-i", str(work / "frames.txt")),
+        # A zoomed frame is taken a few pixels larger than the frame (``film.SPARE``): its top-left is the frame.
+        *("-vf", CROP, "-fps_mode", "cfr", "-r", str(FPS)),
         *("-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart"),
         str(picture),
     )
     if lesson.narration:
-        voice = [(at - offset, file) for at, file in studio.spoken]
-        mixdown.mix(voice, [at - offset for at in studio.clicks], seconds, picture, mp4, work, lesson.loudness)
+        mixdown.mix(list(studio.spoken), list(studio.clicks), seconds, picture, mp4, work, lesson.loudness)
 
     captions = [
-        timeline.Cue(
-            caption.start - offset,
-            (stopped - studio.started if caption.end is None else caption.end) - offset,
-            caption.text,
-        )
+        timeline.Cue(caption.start, stopped if caption.end is None else caption.end, caption.text)
         for caption in studio.captions
     ]
-    captions += [timeline.Cue(cue.start - offset, cue.end - offset, cue.text) for cue in studio.spoken_only]
+    captions += list(studio.spoken_only)
     (folder / bundle.CAPTIONS).write_text(timeline.webvtt(captions), encoding="utf-8")
 
-    parts = timeline.chapters([timeline.Mark(mark.start - offset, mark.title) for mark in studio.marks], seconds)
+    parts = timeline.chapters(list(studio.marks), seconds)
     if parts:
         (folder / bundle.CHAPTERS).write_text(timeline.webvtt(parts), encoding="utf-8")
         (folder / bundle.YOUTUBE_CHAPTERS).write_text(timeline.youtube_chapters(parts), encoding="utf-8")
@@ -713,7 +826,7 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
         "bundle": str(folder),
         "video": str(mp4),
         "seconds": round(seconds, 1),
-        "frames": len(frames),
+        "frames": round(seconds * FPS),
         "captions": len(captions),
         "spoken": len(studio.spoken),
         "clicks": len(studio.clicks),
@@ -727,11 +840,11 @@ async def rehearse(
     """Run ``lesson`` as ``record`` does, as a rehearsal, and say what it went through.
 
     Its app starts, and its setup and its steps run on its page in Chromium as a recording's do, but
-    nothing is spoken and no frame is captured, and no wait is longer than ``REHEARSAL_WAIT``: a
-    caption held as long as it takes to read, a pause the lesson asks for, a pause after a click.
-    A scroll is still waited for until it stops, as a recording waits for it. A step the app no
-    longer has stops it as it stops a recording, with the page kept as ``failure.png`` in the
-    lesson's folder in ``out``, and nothing else is written there.
+    nothing is spoken and no frame is kept, and no wait is longer than ``REHEARSAL_WAIT``: a caption
+    held as long as it takes to read, a pause the lesson asks for, a pause after a click. A scroll is
+    still waited for until it stops, and a pointer moves its whole way, as a recording's do. A step
+    the app no longer has stops it as it stops a recording, with the page kept as ``failure.png`` in
+    the lesson's folder in ``out``, and nothing else is written there.
     """
 
     folder = out / lesson.slug
@@ -741,7 +854,7 @@ async def rehearse(
     async with _staged(lesson, folder, work, chromium, {}, rehearsal=True) as studio:
         await studio.page.mouse.move(*studio.mouse)
         await studio.card(lesson.title, 700)
-        studio.started = time.time()
+        studio.started = studio.film.clock()
         await lesson.run(studio)
         await studio.quiet()
     if not keep_work:

@@ -68,6 +68,10 @@
     if (ui.root) return true;
     if (!document.body) return false;
     ui.root = make("div", { position: "fixed", inset: "0", pointerEvents: "none", zIndex: "2147483000" });
+    // What belongs to the screen rather than the page: the caption, the label and the card. The
+    // camera draws it into the view it shows (camera(), below), so a zoomed frame shows it as large
+    // as the whole screen does; with no camera it is the screen.
+    ui.screen = make("div", { position: "absolute", inset: "0", transformOrigin: "0 0" });
     ui.spot = make("div", { position: "fixed", left: "0", top: "0", width: "0", height: "0", borderRadius: "12px",
       border: "3px solid #f5a524", boxShadow: "0 0 0 9999px rgba(12,14,22,0.40), 0 0 22px 3px rgba(245,165,36,0.55)",
       opacity: "0", transition: "left .45s ease, top .45s ease, width .45s ease, height .45s ease, opacity .35s ease" });
@@ -108,7 +112,8 @@
     draw.label();
     draw.caption();
     draw.card();
-    ui.root.append(ui.spot, ui.ripple, ui.cap, ui.chip, ui.card, ui.cursor);
+    ui.screen.append(ui.cap, ui.chip, ui.card);
+    ui.root.append(ui.spot, ui.ripple, ui.screen, ui.cursor);
     document.documentElement.append(ui.root);
     const follow = () => {
       if (target) {
@@ -127,7 +132,10 @@
   };
   window.addEventListener("mousemove", (e) => {
     movedHere = true;
-    shown.at = [e.clientX, e.clientY];
+    // The page reports whole pixels: a move to where the pointer is already drawn, to within one, keeps
+    // the drawn point, so a pointer the studio brought there does not jump the fraction at its end.
+    const near = shown.at && Math.abs(e.clientX - shown.at[0]) < 1 && Math.abs(e.clientY - shown.at[1]) < 1;
+    if (!near) shown.at = [e.clientX, e.clientY];
     if (ui.root) draw.pointer();
   }, true);
   window.addEventListener("mousedown", (e) => {
@@ -160,6 +168,19 @@
     chapter(text) { set("label", text || null); },
     card(spec) { set("card", spec || null); },
     pointer(on) { set("pointer", !!on); },
+    // The pointer drawn at (x, y) with no mouse event the page sees: a step on its way somewhere.
+    point(x, y) {
+      shown.at = [x, y];
+      if (ensure()) draw.pointer();
+    },
+    // The camera: the screen's caption, label and card drawn into the view at (x, y) on the screen,
+    // at 1/scale, so a frame showing only that view, scale times larger, shows them as on the whole
+    // screen. Returns the page's scroll, which puts the view in the document, or null with no overlay.
+    camera(x, y, scale) {
+      if (!ensure()) return null;
+      ui.screen.style.transform = scale === 1 && !x && !y ? "" : "translate(" + x + "px," + y + "px) scale(" + 1 / scale + ")";
+      return [window.scrollX, window.scrollY];
+    },
     // The spotlight on el, or taken down for null; whether one was up before.
     spot(el, padding) {
       ensure();

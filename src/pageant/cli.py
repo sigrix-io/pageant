@@ -185,7 +185,7 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument(
         "--chromium",
         default=os.environ.get("PAGEANT_CHROMIUM"),
-        help="a Chromium to drive instead of Playwright's own (or PAGEANT_CHROMIUM)",
+        help="a Chromium headless shell (chrome-headless-shell) to drive instead of Playwright's (or PAGEANT_CHROMIUM)",
     )
     record.add_argument("--keep-work", action="store_true", help="keep the frames, the audio and the app's work folder")
     record.set_defaults(run=_record)
@@ -203,7 +203,7 @@ def _parser() -> argparse.ArgumentParser:
     rehearse.add_argument(
         "--chromium",
         default=os.environ.get("PAGEANT_CHROMIUM"),
-        help="a Chromium to drive instead of Playwright's own (or PAGEANT_CHROMIUM)",
+        help="a Chromium headless shell (chrome-headless-shell) to drive instead of Playwright's (or PAGEANT_CHROMIUM)",
     )
     rehearse.add_argument("--keep-work", action="store_true", help="keep the app's work folder")
     rehearse.set_defaults(run=_rehearse)

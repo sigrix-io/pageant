@@ -121,7 +121,7 @@ jobs:
           picture=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 "$bundle/video.mp4")
           sound=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 "$bundle/video.mp4")
           echo "picture: $picture, sound: $sound"
-          test "$picture" = "h264,1920,1080,30/1"
+          test "$picture" = "h264,1920,1080,60/1"
           test "$sound" = "aac,48000"
           cat "$bundle/chapters.txt"
           # Refuses chapters YouTube would not show: fewer than three, or one under ten seconds.

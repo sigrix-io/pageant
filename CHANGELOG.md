@@ -50,6 +50,20 @@ described in `VERSIONING.md`.
   expect, or -14, the level YouTube plays every video at and the one it turns nothing up to.
 - `s.paste(locator, text)`: puts long text in at once, as a paste does, rather than typing it a
   key at a time.
+- Every frame of the video painted, 60 a second, on a clock the film keeps (`pageant.film`):
+  Chromium's headless shell paints a frame only when asked, and the page's own time (its timers,
+  CSS transitions and animations, smooth scrolls) moves on a frame's worth at a time, so motion is
+  as even on a slow computer as on a fast one. A page's time waits for what it fetches, so it loads
+  in the video in the frames its scripts take; a fetch that never ends is let run past after two
+  seconds. A frame the same as the one before is held rather than written again.
+- The camera (`Lesson.zoom`, `pageant.camera`): a spotlight is zoomed in on, as large as fits above
+  the captions and no more than `zoom` times, painted at that size rather than stretched, while the
+  captions, the label and the cards keep their size; it moves back out when the spotlight lifts,
+  before a scroll, before the pointer goes outside the view, and at once on a page change, the
+  terminal or a card. `s.spot(..., zoom=)` sets it for one spotlight.
+- The pointer moves along a gently curved path that speeds up and slows down as a hand does, a
+  point a frame, and the page sees one mouse move, at its end, so a hover menu does not flicker open
+  on its way. `s.type` types a key every frame or more.
 
 ### Fixed
 
@@ -79,6 +93,13 @@ described in `VERSIONING.md`.
   scrolls the page under a sticky top bar to bring a control in it nearer, so pointing at an
   app's cart or account menu moved the page under the bar; and a page moved under the pointer
   for nothing.
+
+### Changed
+
+- Recording takes Chromium's headless shell (`chrome-headless-shell`), which `playwright install
+  chromium` installs beside Chromium: `--chromium` and `PAGEANT_CHROMIUM` name one. A Chromium
+  that cannot paint a frame when asked stops the recording with that said.
+- The video is 60 frames a second, rather than 30.
 
 ### Changed, from Bailey's `lessons/`
 

@@ -4,12 +4,13 @@ Record a product's video lessons from the app itself, as code.
 
 A lesson is a Python file: a table of everything it says, and its steps, each a highlight, a click,
 a line typed or a command run. `pageant record` starts the product, drives its real page in
-Chromium with a cursor, a spotlight and captions drawn over it, speaks every line with a voice
-that runs on your computer over music made there, and writes a folder of the lesson's own:
+Chromium with a cursor, a spotlight and captions drawn over it, paints every frame of the video
+itself, 60 a second, zooming in on what a step points at if the lesson asks, speaks every line with
+a voice that runs on your computer over music made there, and writes a folder of the lesson's own:
 
 | File | What it is |
 | --- | --- |
-| `video.mp4` | the video: 1080p, 30 fps, H.264 and AAC, with its chapters as markers desktop players show |
+| `video.mp4` | the video: 1080p, 60 fps, H.264 and AAC, with its chapters as markers desktop players show |
 | `cover.jpg` | its poster, which is the title card |
 | `captions.vtt` | its captions: every line spoken, including those over a card |
 | `chapters.vtt` | its chapters, for a web page's video player |
@@ -34,6 +35,8 @@ pip install "pageant[record]"
 ```bash
 playwright install chromium
 ```
+
+(which installs Chromium's headless shell too, what Pageant records with)
 
 ```bash
 pageant example notebook
@@ -114,6 +117,7 @@ A `Lesson` holds:
 | `label_seconds` | how long the chapter label shows after its chapter starts; unset, it stays up until the next one |
 | `pronounce` | words the voice says differently from how they are written, respelled in every line it speaks while the captions keep the written form: `{"example.io": "example dot eye oh"}` |
 | `loudness` | the mix's loudness in LUFS, set in two passes: -16 unless it says, the level web players expect, or -14, what YouTube plays every video at |
+| `zoom` | how far the camera may zoom in on what a spotlight shows: 1, the default, never zooms; 2 shows it up to twice as large (below) |
 
 A lesson's steps call the studio, `s`:
 
@@ -124,10 +128,10 @@ A lesson's steps call the studio, `s`:
 | `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
 | `s.quiet()` | takes the caption down |
-| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped; the spotlight comes up where the element is, and one already up is taken down while the page scrolls there |
-| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, once the page has stopped scrolling to it, and clicks, with a sound |
+| `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped; the spotlight comes up where the element is, and one already up is taken down while the page scrolls there. With the lesson's `zoom`, or `zoom=` for this one, the camera moves in on it |
+| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, along a gently curved path that speeds up and slows down, a point a frame, once the page has stopped scrolling to it, and clicks, with a sound |
 | `s.arrive(url)` | waits for the page a step went to, loaded: `url` is its address, a glob such as `"**/checkout/done"`, a regular expression, or a function of the address |
-| `s.type(locator, text)` | types as a person does |
+| `s.type(locator, text)` | types as a person does, a key every frame or more |
 | `s.paste(locator, text)` | puts text in at once, as a paste does, for words too long to watch being typed |
 | `s.terminal(title, where)` | leaves the page for a terminal |
 | `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
@@ -156,6 +160,34 @@ or clear of the captions at the foot of the screen with nothing drawn over its m
 scrolls the page under a sticky top bar to bring a control in it nearer, so a lesson pointing at
 an app's cart or account menu would otherwise move the page under the bar.
 
+### Every frame, painted
+
+Pageant does not film the screen as it goes; it paints the video a frame at a time
+(`pageant.film`). Chromium's headless shell paints a frame only when asked, and the page's own
+time, its timers, transitions, animations and smooth scrolls, moves on only when the film moves it,
+1/60 of a second a frame. So every motion in the video is as even as the clock, on a slow computer
+as on a fast one: a pointer's move, a scroll, a fade. The pointer is drawn along its path a point
+a frame, and the page sees one mouse move, at its end, so a menu that opens on hover does not
+flicker open on the way.
+
+While a page fetches, its time waits for the answer, so a page loads in the video in the frames its
+scripts take, not the seconds its server does; a fetch that never ends (a stream, a long poll) is
+let run past after two seconds of waiting. A frame the same as the one before is not written again.
+Recording takes the headless shell, `chrome-headless-shell`, which `playwright install chromium`
+installs beside Chromium; `--chromium` names one already installed. A Chromium that is not one
+stops the recording with that said.
+
+### The camera
+
+A lesson with `zoom` above 1 has a camera (`pageant.camera`). When a step puts the spotlight on
+an element, the camera moves in on it, over 0.7 s, until it fills as much of the room above the
+captions as fits, no more than `zoom` times larger and never past the screen's edges; a zoom of
+less than 1.18 times is not made. The page is painted at that size, not stretched: its text is as
+sharp as at full screen. The captions, the chapter label and the cards keep their size and place.
+The camera moves back out when the spotlight lifts, before the page scrolls, before the pointer
+goes to something outside the view, and at once on a page change, the terminal or a card.
+`s.spot(locator, zoom=1)` keeps one spotlight on the whole screen in a lesson that zooms.
+
 The video's chapters follow YouTube's rules, since a video that breaks them shows none: the first
 starts at 0:00 whenever the lesson marked it, and a chapter shorter than ten seconds runs on into
 the one before it.
@@ -167,7 +199,7 @@ pageant rehearse notebook/lesson.py
 ```
 
 runs a lesson through as `pageant record` does, on the same page in the same Chromium, with
-nothing spoken, no frame captured and no wait longer than a quarter of a second: the time a
+nothing spoken, no frame kept and no wait longer than a quarter of a second: the time a
 caption is held, a pause the lesson asks for, a pause after a click. A scroll is still waited for
 until it stops. A step the app no longer has stops it as it stops a recording, with the page kept
 as `failure.png` in the lesson's folder, and nothing else is written there. It takes the `record`
@@ -260,7 +292,7 @@ scripted: its page is the one it films, and its command really runs.
 
 | Command | What it does |
 | --- | --- |
-| `pageant record LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | records the lesson the file names as `LESSON` into `out/` beside it; `--chromium` (or `PAGEANT_CHROMIUM`) drives a Chromium already installed, and `--keep-work` keeps the frames, the audio and the app's work folder |
+| `pageant record LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | records the lesson the file names as `LESSON` into `out/` beside it; `--chromium` (or `PAGEANT_CHROMIUM`) drives a Chromium headless shell already installed (`chrome-headless-shell`) rather than Playwright's, and `--keep-work` keeps the frames, the audio and the app's work folder |
 | `pageant rehearse LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | runs the lesson through as `record` would, with nothing spoken or filmed and its long waits cut short, and stops where `record` would, keeping the page as `failure.png` in its folder in `out/`; `--keep-work` keeps the app's work folder |
 | `pageant pack PAGES.py [--out DIR] [--zip FILE]` | zips the recorded lessons of `PATH`, as `out/lessons.zip` unless `--zip` names another |
 | `pageant youtube-text PAGES.py [--out DIR] [--link SLUG=URL ...]` | writes each recorded lesson's `youtube.txt` from `PATH` and `PRODUCT` |
@@ -283,10 +315,11 @@ ruff check . && ruff format --check . && mypy && pytest
 ```
 
 The tests need neither Playwright nor the voice, and run on Linux, macOS and Windows, except
-`tests/test_studio.py`, which drives the studio in Chromium: a lesson that goes from page to page,
-a click after a long scroll, the chapter label and the spotlight, what is scrolled to and what is
-not, a paste, a rehearsal. It is skipped without the `record` extra and a Chromium
-(`playwright install chromium`, or one `PAGEANT_CHROMIUM` names), and CI's studio job runs it,
+`tests/test_studio.py`, which drives the studio in Chromium's headless shell: a lesson that goes
+from page to page, a click after a long scroll, the chapter label and the spotlight, what is
+scrolled to and what is not, a paste, the film's clock, the pointer's path, the camera, a rehearsal.
+It is skipped without the `record` extra and a headless shell (`playwright install chromium`, or
+one `PAGEANT_CHROMIUM` names), and CI's studio job runs it,
 where `PAGEANT_STUDIO_TESTS=required` fails a skip. CI's record job rehearses and films the
 example lesson from a fresh install of the wheel, on Linux, and keeps the video as an artifact of
 the run. `tests/test_boundary.py` fails if the engine names a product it films, and
