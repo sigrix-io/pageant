@@ -4,7 +4,8 @@ Moved from sigrix-io/bailey's ``tests/test_lesson_bundles.py`` with the module. 
 description ends with is a product's :class:`~pageant.youtube.Product` now, where Bailey's were
 constants of its own; the rules are YouTube's and stay as they were: a title of 100 characters at
 most, no ``<`` or ``>``, a description of 5,000 bytes at most, tags of 500 characters as YouTube
-counts them, and chapters YouTube shows. A lesson that breaks one leaves no upload written.
+counts them, and chapters YouTube shows. So is each tag, which is one word. A lesson that breaks one
+leaves no upload written.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ PRODUCT = youtube.Product(
     link="https://example.com/notebook",
     all_lessons="https://learn.example.com/learn/tag/notebook",
     scripted="Its answers are scripted, so the lesson is the same every time it is recorded.",
-    tags=("notebook", "notes app", "tutorial"),
+    tags=("notebook", "notesapp", "tutorial"),
 )
 
 #: A recording's chapters as ``timeline.youtube_chapters`` writes them.
@@ -76,7 +77,7 @@ def test_each_lesson_gets_its_youtube_upload_written_from_its_page(tmp_path: Pat
         "Lesson 1 of 2 in Notebook: getting started. All of them: https://learn.example.com/learn/tag/notebook\n\n"
         "Notebook keeps your notes on one page.\n"
         "Get Notebook: https://example.com/notebook\n\n"
-        "TAGS\nnotebook, notes app, tutorial\n"
+        "TAGS\nnotebook, notesapp, tutorial\n"
     )
     second = written[1].read_text(encoding="utf-8")
     assert f"on learn.example.com: {link}\n" in second, "the tracked link made for its post"
@@ -141,11 +142,21 @@ def test_what_youtube_refuses_stops_the_command(change: dict[str, str], says: st
 
 
 def test_the_tags_are_held_to_youtubes_count() -> None:
-    assert youtube._tags_length(("a b", "cd")) == len('"a b",cd')
+    assert youtube._tags_length(("ab", "cd")) == len("ab,cd")
     assert youtube._tags_length(()) == 0
-    too_many = dataclasses.replace(PRODUCT, tags=tuple(f"tag number {n}" for n in range(40)))
+    too_many = dataclasses.replace(PRODUCT, tags=tuple(f"tagnumber{n}" for n in range(60)))
     with pytest.raises(ValueError, match="it takes 500"):
         youtube.upload_for(FIRST, number=1, path=PATH, product=too_many, chapters_text=CHAPTERS)
+
+
+@pytest.mark.parametrize("tag", ["notes app", "notes\tapp", " notes app"])
+def test_a_tag_holding_a_space_stops_the_command_and_says_how_to_write_it(tmp_path: Path, tag: str) -> None:
+    _recorded(tmp_path)
+    spaced = dataclasses.replace(PRODUCT, tags=("notebook", tag))
+
+    with pytest.raises(ValueError, match=re.escape(f"the tag {tag!r} holds a space; each tag is one word: 'notesapp'")):
+        youtube.write(tmp_path, PATH, spaced)
+    assert not list(tmp_path.rglob("youtube.txt")), "no upload is written"
 
 
 def test_a_lesson_that_breaks_a_rule_leaves_no_upload_written(tmp_path: Path) -> None:

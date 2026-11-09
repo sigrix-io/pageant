@@ -283,7 +283,9 @@ into YouTube Studio beside the folder's `video.mp4`, `cover.jpg` (the thumbnail)
 `--link` gives), its chapters, what in it is scripted, where it sits in its path, and the
 product's `PRODUCT` lines. YouTube refuses a title over 100 characters, `<` or `>`, a description
 over 5,000 bytes and tags over 500 characters, and shows no chapters that break its rules, so each
-is checked first, and a lesson that breaks one stops the command before anything is written.
+is checked first, and a lesson that breaks one stops the command before anything is written. So
+does a tag holding a space: each of the product's tags is one word (`aimarketplace`, not
+`ai marketplace`).
 
 ## What is real, and what is scripted
 

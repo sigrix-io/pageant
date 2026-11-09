@@ -49,5 +49,5 @@ PRODUCT = Product(
     all_lessons="https://example.com/learn",
     # Nothing in this lesson is scripted: the page is the one it films, and the command really runs.
     scripted="",
-    tags=("pageant", "example", "video lesson"),
+    tags=("pageant", "example", "videolesson"),
 )

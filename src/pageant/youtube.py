@@ -18,7 +18,9 @@ YouTube refuses a title or a description holding ``<`` or ``>``, a title over 10
 description over 5,000 bytes and tags over 500 characters, and makes no chapters of a list that does
 not start at 0:00, holds fewer than three, or has one under ten seconds. Each is checked here, and a
 lesson that breaks one stops the command, naming it, before anything is written: found here, not in
-an upload that is refused or that shows no chapters.
+an upload that is refused or that shows no chapters. So does a tag holding a space: each tag is one
+word, as the people who upload the lessons want them, so ``"ai marketplace"`` is written
+``"aimarketplace"``.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ class Product:
     #: What in the lessons is scripted or a stand-in, as a lesson says wherever it is published;
     #: empty only for lessons with nothing scripted.
     scripted: str
+    #: The video's tags, each one word: a tag holding a space stops the command.
     tags: tuple[str, ...] = ()
 
 
@@ -94,9 +97,10 @@ def chapters(text: str) -> list[tuple[int, str]]:
 
 
 def _tags_length(tags: Sequence[str]) -> int:
-    """How YouTube counts its 500: each tag, the commas between them, and the quotes a tag with a space takes."""
+    """How YouTube counts its 500: each tag and the commas between them. A tag holds no space, which
+    YouTube would count with the quotes it puts round one."""
 
-    return sum(len(tag) + (2 if " " in tag else 0) for tag in tags) + max(0, len(tags) - 1)
+    return sum(len(tag) for tag in tags) + max(0, len(tags) - 1)
 
 
 def upload_for(
@@ -137,6 +141,9 @@ def upload_for(
     size = len(upload.description.encode("utf-8"))
     if size > DESCRIPTION_MAX_BYTES:
         raise ValueError(f"{page.slug}: its description is {size} bytes; YouTube takes {DESCRIPTION_MAX_BYTES}")
+    for tag in upload.tags:
+        if any(character.isspace() for character in tag):
+            raise ValueError(f"the tag {tag!r} holds a space; each tag is one word: {''.join(tag.split())!r}")
     if _tags_length(upload.tags) > TAGS_MAX:
         raise ValueError(
             f"the tags are {_tags_length(upload.tags)} characters as YouTube counts them; it takes {TAGS_MAX}"
