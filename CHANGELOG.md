@@ -126,6 +126,10 @@ described in `VERSIONING.md`.
   chromium` installs beside Chromium: `--chromium` and `PAGEANT_CHROMIUM` name one. A Chromium
   that cannot paint a frame when asked stops the recording with that said.
 - The video is 60 frames a second, rather than 30.
+- A product's YouTube tags are one word each, as the people uploading the lessons want them:
+  `pageant youtube-text` stops on a tag holding a space, naming it and its joined spelling
+  (`ai marketplace` is `aimarketplace`), before anything is written. Tags were phrases, and the
+  example's `video lesson` is `videolesson` now.
 
 ### Changed, from Bailey's `lessons/`
 
