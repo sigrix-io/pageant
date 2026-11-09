@@ -587,13 +587,14 @@ class Studio:
 
         if not await locator.evaluate(IN_VIEW, self.lesson.screen.band):
             await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
-        until = self.film.clock() + SETTLE_CAP
+        # The page's time, which a cut leaves running: frames painted, not the video's seconds.
+        until = self.film.count + round(SETTLE_CAP * FPS)
         await self.sleep(pause_ms - SETTLE_POLL * 1000)
         box = await locator.bounding_box()
         while True:
             await self.film.seconds(SETTLE_POLL)
             then, box = box, await locator.bounding_box()
-            if _held(then, box) or self.film.clock() >= until:
+            if _held(then, box) or self.film.count >= until:
                 return box
 
     async def spot(self, locator: Locator | None, padding: float = 8, zoom: float | None = None) -> None:
@@ -706,6 +707,22 @@ class Studio:
 
         await self.page.wait_for_url(url)
         await self._show()
+
+    @contextlib.asynccontextmanager
+    async def cut(self) -> AsyncIterator[None]:
+        """Leave out of the video what the steps inside take, as an edit cuts a wait: a payment
+        processing, a page that takes its time.
+
+        The page's time runs on, and the video goes from the frame before to the frame after, its
+        captions, voice and clicks where they were. A line said inside goes on under the frame after;
+        hold none there.
+        """
+
+        self.film.cutting = True
+        try:
+            yield
+        finally:
+            self.film.cutting = False
 
     async def thumbnail(self) -> None:
         """Choose the frame on screen now as the YouTube thumbnail's picture (``Lesson.thumbnail``).

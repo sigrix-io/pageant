@@ -1313,3 +1313,84 @@ def test_a_phones_screen_takes_no_zoom_no_thumbnail_and_no_youtube_cut(tmp_path:
         asyncio.run(studio.record(phone, tmp_path, youtube=True))
     assert not list(tmp_path.iterdir()), "refused before anything is written"
     assert Lesson(**lesson, zoom=2.0, thumbnail={"title": "Your first note"}).screen == camera.LANDSCAPE
+
+
+def test_a_cut_leaves_out_of_the_video_what_its_steps_take_while_the_page_runs_on(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.sleep(500)
+        seen["page before"] = await s.page.evaluate("performance.now()")
+        before = s.clock()
+        async with s.cut():
+            await s.sleep(3000)
+        seen["through the cut"] = s.clock() - before
+        seen["page after"] = await s.page.evaluate("performance.now()")
+        await s.sleep(500)
+        seen["clock"] = s.clock()
+
+    shots = _filmed(tmp_path, run, chromium)
+
+    video = sum(shot.frames for shot in shots) / studio.FPS
+    assert seen["through the cut"] == pytest.approx(0, abs=0.05), "the video's clock stands still through it"
+    assert seen["page after"] - seen["page before"] == pytest.approx(3000, abs=50), "the page's time ran on through it"
+    assert video == pytest.approx(seen["clock"], abs=0.05), "the video is as long as its clock says"
+    assert video < 2.0
+
+
+class _LosingCDP:
+    """A page whose time moves on but whose answers are lost, as when it goes to another page mid-frame:
+    the answer to the first ``lost`` asks for the page's time to move on never comes."""
+
+    def __init__(self, lost: int) -> None:
+        self.lost = lost
+        self.policies: list[str] = []
+        self.waiting: list[Callable[[Any], None]] = []
+
+    def once(self, event: str, handler: Callable[[Any], None]) -> None:
+        self.waiting.append(handler)
+
+    async def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "HeadlessExperimental.beginFrame":
+            await asyncio.Event().wait()
+        assert params is not None
+        self.policies.append(params["policy"])
+        if len(self.policies) > self.lost:
+            asyncio.get_running_loop().call_soon(lambda: [handler(None) for handler in self.waiting])
+        return {"virtualTimeTicksBase": 1000.0}
+
+
+@pytest.mark.parametrize(
+    ("stuck", "lost", "policies"),
+    [
+        (False, 2, ["pauseIfNetworkFetchesPending", "advance", "advance"]),
+        (False, 99, ["pauseIfNetworkFetchesPending"] + ["advance"] * (1 + film.ASKS)),
+        (True, 1, ["advance", "advance"]),
+        (True, 99, ["advance"] * (1 + film.ASKS)),
+    ],
+    ids=["answered late", "never answered", "stuck, answered late", "stuck, never answered"],
+)
+def test_a_frame_whose_answer_is_lost_asks_again_and_never_waits_for_ever(
+    monkeypatch: pytest.MonkeyPatch, stuck: bool, lost: int, policies: list[str]
+) -> None:
+    monkeypatch.setattr(film, "STUCK", 0.05)
+    cdp = _LosingCDP(lost)
+    painting = film.Film(cdp)  # type: ignore[arg-type]
+    if stuck:
+        # A request open longer than STUCK: a stream, which the page's time runs on past.
+        painting._open["stream"] = time.monotonic() - 10
+
+    asyncio.run(asyncio.wait_for(painting._advance(), 5))
+
+    assert cdp.policies == policies
+
+
+def test_a_frame_chromium_never_paints_stops_the_film_with_that_said(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(film, "PAINT_SECONDS", 0.05)
+    painting = film.Film(_LosingCDP(0))  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="Chromium painted no frame in 0.05 s of asking"):
+        asyncio.run(asyncio.wait_for(painting._begin({"interval": 1000 / 60}), 5))

@@ -137,6 +137,8 @@ A lesson's steps call the studio, `s`:
 | `s.terminal(title, where)` | leaves the page for a terminal |
 | `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
 | `s.sleep(ms)` | waits |
+| `async with s.cut():` | leaves out of the video what the steps inside take, as an edit cuts a wait (a payment processing, a slow page): the page's time runs on, and the video goes from the frame before to the frame after, its captions, voice and clicks where they were |
+| `s.thumbnail()` | chooses the frame on screen as the YouTube thumbnail's picture (below) |
 | `s.page` | the Playwright page itself, for anything else |
 
 A step that goes to another page (a link, a form post, a server redirect such as a checkout's)

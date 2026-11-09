@@ -25,6 +25,9 @@ described in `VERSIONING.md`.
   camera stays still on it, so it takes no `zoom` and no thumbnail, and it keeps its captions in the
   picture rather than having a YouTube cut. The report holds a vertical video to a Short's rules: three
   minutes at most, no end screen and no chapters, and three seconds after its last line at most.
+- `Studio.cut()`: what the steps inside take is left out of the video, as an edit cuts a wait (a payment
+  processing, a slow page). The page's time runs on; the film's clock, which is the video's, does not,
+  so captions, voice and clicks stay where they were.
 - YouTube Shorts' uploads (`youtube.Short`): a pages file's `SHORTS`, each a lesson of its own on a
   phone's screen, from a lesson of the path, whose `youtube.txt` links to that lesson's page and names
   it as its Related video.
@@ -98,6 +101,11 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A frame whose answer is lost no longer holds the film for ever. A page that went to another while its
+  time moved on a frame could take with it the renderer that would have said so, and the film waited,
+  idle, until the recording was killed. It asks again every `STUCK` seconds, and paints the frame
+  after `ASKS` asks; and a frame Chromium does not paint in `PAINT_SECONDS` (60) stops the recording
+  with that said.
 - The screen a lesson is filmed on is set on its page (`Emulation.setDeviceMetricsOverride`, keeping the
   browser's own scale). Chromium's headless shell opens every page at 1280×720 whatever `--window-size`
   says, which the studio passed it and which only ever matched by chance.
