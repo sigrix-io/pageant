@@ -346,6 +346,70 @@ def test_the_youtube_cut_draws_no_caption_into_the_picture_and_logs_each_one(
     assert seen["logged"] == ["A line YouTube shows itself."], "the captions file still has the line"
 
 
+def _thumbnailed(tmp_path: Path, chromium: str | None, *, captions_drawn: bool) -> dict[str, Any]:
+    """A lesson that chooses its thumbnail's frame with a caption up, filmed as one cut or the other."""
+
+    seen: dict[str, Any] = {}
+    staged = Lesson(
+        page=PAGE,
+        title={"kicker": "Notebook · lesson 1", "title": "Your first note", "sub": ""},
+        narration={},
+        run=lambda s: asyncio.sleep(0),
+        app=_Site(),
+        thumbnail={"title": "Find *a note* fast", "brand": "Notebook"},
+    )
+    frames, work = tmp_path / "frames", tmp_path / "work"
+    frames.mkdir()
+    work.mkdir()
+
+    async def go() -> None:
+        async with studio._staged(
+            staged, tmp_path, work, chromium, {}, frames=frames, captions_drawn=captions_drawn
+        ) as s:
+            await s.card(None)
+            s.film.roll()
+            s.started = s.film.clock()
+            await s.say("The line on screen as the frame is chosen.", 0)
+            await s.page.wait_for_function(STILL)
+            await s.thumbnail()
+            s.film.rolling = False
+            seen["chosen"] = (work / studio.THUMBNAIL_SHOT).is_file()
+            if seen["chosen"]:
+                await studio._thumbnail(s, tmp_path)
+                seen["title"] = await s.page.locator(".title").inner_html()
+                seen["kicker"] = await s.page.locator(".kicker").text_content()
+                seen["brand"] = await s.page.locator(".brand").text_content()
+                seen["picture"] = await s.page.evaluate("() => document.querySelector('.shot').naturalWidth")
+                seen["overlay"] = await s.page.evaluate(READ)
+
+    asyncio.run(go())
+    return seen
+
+
+def test_the_youtube_cut_composes_its_thumbnail_from_its_words_and_the_frame_it_chose(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen = _thumbnailed(tmp_path, chromium, captions_drawn=False)
+
+    assert seen["chosen"], "the frame on screen was kept"
+    assert seen["title"] == "Find <em>a note</em> fast", "a starred part is drawn in the accent colour"
+    assert (seen["kicker"], seen["brand"]) == ("Notebook · lesson 1", "Notebook"), "the title card's kicker by default"
+    assert seen["picture"] == 1920, "the chosen frame, as the film kept it"
+    # Nothing of the lesson's screen is drawn over it: no card, no caption, no pointer.
+    assert (seen["overlay"]["card"], seen["overlay"]["caption"], seen["overlay"]["pointer"]) == (None, None, None)
+    made = (tmp_path / bundle.THUMBNAIL).read_bytes()
+    assert _jpeg_size(made) == (1920, 1080)
+    assert len(made) < 2_000_000, "YouTube takes a thumbnail of 2 MB at most"
+
+
+def test_the_lessons_own_recording_chooses_no_thumbnail_frame(tmp_path: Path, chromium: str | None) -> None:
+    # Its frames have the captions in the picture; the thumbnail is the YouTube cut's.
+    seen = _thumbnailed(tmp_path, chromium, captions_drawn=True)
+
+    assert seen["chosen"] is False
+    assert not (tmp_path / bundle.THUMBNAIL).exists()
+
+
 def test_the_page_a_link_goes_to_has_the_label_the_caption_and_the_pointer_in_its_first_frame(
     tmp_path: Path, chromium: str | None
 ) -> None:

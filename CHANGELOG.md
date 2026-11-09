@@ -14,6 +14,11 @@ described in `VERSIONING.md`.
   own recording keeps its captions in the picture for a learning site, and the pack takes it.
   `pageant youtube-text` writes each lesson's upload from its YouTube cut where one was recorded,
   as its chapters are timed to that video.
+- A YouTube thumbnail: the YouTube cut composes `thumbnail.jpg` (1920×1080, under YouTube's 2 MB)
+  from the lesson's `thumbnail` words (a short title, a `*starred*` part in the accent colour, an
+  optional kicker and brand) beside its mark, and the frame it chose with `Studio.thumbnail()`, which
+  is zoomed where the camera was. It is drawn on a page of Pageant's own once the film stops rolling,
+  in Inter where the fonts answer.
 - A recording's report (`pageant.report`): `report.md` and `report.json` beside the video, and what
   they found worth a look in what `pageant record` prints. It holds the checks made by hand before
   publishing, read off the recording's own log: the loudness and true peak against the lesson's

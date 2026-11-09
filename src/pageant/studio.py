@@ -56,6 +56,8 @@ from pageant.camera import HEIGHT, WHOLE, WIDTH, View
 from pageant.film import CROP, FLAGS, FPS, FRAME_HEIGHT, FRAME_WIDTH, Film, concat
 
 HERE = Path(__file__).resolve().parent
+#: The frame a lesson chose for its thumbnail (``Studio.thumbnail``), in the work folder.
+THUMBNAIL_SHOT = "thumbnail-shot.jpg"
 SCALE = 1.5
 #: A voice starts a moment after its caption fades in, and the next line waits a breath after it.
 VOICE_LEAD = 0.25
@@ -149,6 +151,11 @@ class Lesson:
     #: How far the camera may zoom in on what a spotlight shows: 1, the default, never zooms; 2 shows
     #: it up to twice as large (``camera.py``). The captions, the label and the cards keep their size.
     zoom: float = 1.0
+    #: The YouTube thumbnail's words: a short ``title`` (a ``*starred*`` part in the accent colour), and
+    #: optionally a ``kicker`` above it (the title card's, unless given) and a ``brand`` beside the
+    #: ``mark``. Its picture is the frame the lesson chose with ``Studio.thumbnail``; the YouTube cut
+    #: (``record(youtube=True)``) composes it, as ``thumbnail.jpg``.
+    thumbnail: Mapping[str, str] | None = None
 
     @property
     def slug(self) -> str:
@@ -680,6 +687,20 @@ class Studio:
         await self.page.wait_for_url(url)
         await self._show()
 
+    async def thumbnail(self) -> None:
+        """Choose the frame on screen now as the YouTube thumbnail's picture (``Lesson.thumbnail``).
+
+        Only the YouTube cut takes it, as its frames hold no caption; a rehearsal and the lesson's own
+        recording take none. Where the camera has moved in on a spotlight, the picture is that view.
+        """
+
+        if self.rehearsal or self.captions_drawn or not self.film.rolling:
+            return
+        # The frame after this one shows what the step before drew.
+        await self.film.frames(2)
+        if self.film.last_file is not None:
+            shutil.copyfile(self.film.last_file, self.work / THUMBNAIL_SHOT)
+
     async def terminal(self, title: str = "Terminal", where: str = "~") -> None:
         """Leave the app's page for the terminal, where shell() runs commands, and put the pointer away."""
 
@@ -771,7 +792,7 @@ async def _staged(
 
     failure = out / "failure.png"
     failure.unlink(missing_ok=True)
-    served = {"/": HERE / "terminal.html"}
+    served = {"/": HERE / "terminal.html", "/thumbnail": HERE / "thumbnail.html", "/shot.jpg": work / THUMBNAIL_SHOT}
     if lesson.mark is not None and lesson.mark.url.startswith("/"):
         served[lesson.mark.url] = lesson.mark.file
     running: Running = lesson.app.start(work, apps.environment(work, lesson.commands))
@@ -859,7 +880,44 @@ async def _capture(
         await film.seconds(max(0.4, studio.voice_until - studio.clock() + 0.4))
         film.rolling = False
         stopped = studio.clock()
+        if lesson.thumbnail is not None and (work / THUMBNAIL_SHOT).is_file():
+            await _thumbnail(studio, out)
     return studio, stopped
+
+
+async def _thumbnail(studio: Studio, folder: Path) -> None:
+    """Compose the lesson's YouTube thumbnail on Pageant's own page and keep it as ``thumbnail.jpg``.
+
+    The film has stopped rolling, so nothing here reaches the video. What is on screen is cleared
+    first: the end card and the pointer would otherwise be drawn again over the thumbnail's page.
+    """
+
+    lesson = studio.lesson
+    words = dict(lesson.thumbnail or {})
+    if not words.get("title"):
+        raise ValueError("A lesson's thumbnail needs a title: Lesson(thumbnail={'title': ...}).")
+    studio.label, studio._caption, studio._card = None, None, None
+    studio._cut(WHOLE)
+    await studio.film.frames(1)
+    await studio.page.goto(studio.terminal_url + "thumbnail")
+    await studio.page.wait_for_function("() => typeof window.thumbnail === 'function' && window.__demo")
+    await studio.page.evaluate("() => window.__demo.pointer(false)")
+    await studio.page.evaluate(
+        "(words) => window.thumbnail(words)",
+        {
+            "title": words["title"],
+            "kicker": words.get("kicker", lesson.title.get("kicker", "")),
+            "brand": words.get("brand", ""),
+            "mark": lesson.mark.url if lesson.mark is not None else "",
+            "shot": "/shot.jpg",
+        },
+    )
+    picture = await studio.film.picture()
+    if picture is None:
+        raise RuntimeError("Chromium painted no picture of the thumbnail.")
+    drawn = studio.work / "thumbnail.png"
+    drawn.write_bytes(picture)
+    mixdown.ffmpeg("-i", str(drawn), "-q:v", "2", str(folder / bundle.THUMBNAIL))
 
 
 async def record(
@@ -875,6 +933,8 @@ async def record(
 
     folder = out / bundle.YOUTUBE_CUT / lesson.slug if youtube else out / lesson.slug
     folder.mkdir(parents=True, exist_ok=True)
+    # A thumbnail an earlier take left there is not this one's.
+    (folder / bundle.THUMBNAIL).unlink(missing_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f"{lesson.slug}-", dir=out))
     studio, stopped = await _capture(lesson, folder, work, chromium, captions_drawn=not youtube)
     shots = studio.film.shots
@@ -946,6 +1006,7 @@ async def record(
         "clicks": len(studio.clicks),
         "chapters": [f"{timeline.clock_time(part.start)} {part.text}" for part in parts],
         "report": str(folder / report.MARKDOWN),
+        **({"thumbnail": str(folder / bundle.THUMBNAIL)} if (folder / bundle.THUMBNAIL).is_file() else {}),
         "to look at": quality["findings"],
     }
 

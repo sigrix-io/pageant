@@ -300,13 +300,20 @@ drawn into the picture, since YouTube shows `captions.vtt` itself, under the vie
 the languages it translates to. The lesson's own recording, whose captions are part of the picture,
 is the one a learning site plays and a pack carries.
 
+The cut also makes the video's thumbnail, `thumbnail.jpg`, where the lesson says what it reads
+(`Lesson(thumbnail={"title": "Find *a note* fast"})`, a starred part in the accent colour, with an
+optional `kicker` and `brand`) and chooses its picture: `await s.thumbnail()` keeps the frame on
+screen at that step, zoomed where the camera has moved in. It is composed in Inter beside the
+product's mark, at 1920×1080 and under YouTube's 2 MB.
+
 ```bash
 pageant youtube-text notebook/pages.py --link notebook-lesson-1-your-first-note=https://example.com/go/abc
 ```
 
 writes `youtube.txt` into the folder of each recorded lesson's YouTube cut, or of the lesson's own
 recording where it has no cut: its title, description and tags, to paste into YouTube Studio
-beside that folder's `video.mp4`, `cover.jpg` (the thumbnail) and `captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
+beside that folder's `video.mp4`, `thumbnail.jpg` (or `cover.jpg`, the title card) and
+`captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
 `--link` gives), its chapters, what in it is scripted, where it sits in its path, and the
 product's `PRODUCT` lines. YouTube refuses a title over 100 characters, `<` or `>`, a description
 over 5,000 bytes and tags over 500 characters, and shows no chapters that break its rules, so each

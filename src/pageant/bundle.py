@@ -42,6 +42,8 @@ YOUTUBE_CHAPTERS = "chapters.txt"
 #: The folder in ``out`` that a lesson's YouTube cut is recorded into, as ``youtube/<folder>/``: the
 #: lesson with no captions drawn into the picture, for YouTube to show its ``captions.vtt`` itself.
 YOUTUBE_CUT = "youtube"
+#: The YouTube cut's thumbnail, composed from the lesson's ``thumbnail`` words and the frame it chose.
+THUMBNAIL = "thumbnail.jpg"
 #: What a lesson's folder must hold before it is packed, and what a pack carries of it.
 RECORDED = (VIDEO, CAPTIONS, CHAPTERS, COVER)
 PACKED = (PAGE, *RECORDED)
