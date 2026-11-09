@@ -115,9 +115,11 @@ jobs:
         run: |
           set -euo pipefail
           bundle=notebook/out/first-note
-          for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json; do
+          for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json report.json report.md; do
             test -s "$bundle/$name" || { echo "::error::$bundle/$name is missing or empty"; exit 1; }
           done
+          # What the recording's report found worth a look; it never stops the job.
+          cat "$bundle/report.md"
           # Read from ffprobe's JSON: its CSV gains fields of its own from one ffmpeg release to the next.
           stream=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of json "$bundle/video.mp4")
           echo "$stream"

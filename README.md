@@ -210,6 +210,24 @@ until it stops. A step the app no longer has stops it as it stops a recording, w
 as `failure.png` in the lesson's folder, and nothing else is written there. It takes the `record`
 extra, but not ffmpeg, and runs in a fraction of a recording's time.
 
+### The report
+
+Each recording writes `report.md` and `report.json` beside its video (`pageant.report`), and
+`pageant record` prints what they found worth a look. They are read off the recording's own log,
+so a caption's time on screen is measured against the clip its voice spoke, and the motion against
+the frames the film kept:
+
+- the mix's loudness against the lesson's target, and its true peak;
+- a caption still up four seconds after its voice and breath have ended, which a viewer sits
+  through as dead air;
+- the longest stretch with nothing said, and the longest with no frame changing, between the first
+  line and the end of the last (a title or end card held still is neither);
+- how many distinct frames the busiest second of motion has, of 60;
+- the seconds after the last line, which YouTube's end screen takes (5 to 20);
+- the chapters, held to what YouTube makes chapters of.
+
+A finding is something to look at: the video is written whatever the report says.
+
 ## Starting the product: the start hook
 
 The studio holds no product's name. A lesson names its app, and the studio asks it to start, in a

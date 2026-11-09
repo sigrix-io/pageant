@@ -8,6 +8,13 @@ described in `VERSIONING.md`.
 
 ### Added
 
+- A recording's report (`pageant.report`): `report.md` and `report.json` beside the video, and what
+  they found worth a look in what `pageant record` prints. It holds the checks made by hand before
+  publishing, read off the recording's own log: the loudness and true peak against the lesson's
+  target, a caption up long after its voice, the longest stretch with nothing said and the longest
+  with no frame changing (title and end cards aside), the distinct frames of the busiest second of
+  motion, the seconds after the last line that YouTube's end screen takes, and the chapters YouTube
+  makes. A finding never stops a recording.
 - A card's `points`: a short list under its title, numbered, or ticked for a recap (`"checks": True`),
   and `Studio.tell`, which brings them up one at a time as a line read over the card names them, so a
   lesson can open on what it covers and close on what it showed. A point added to a card on screen

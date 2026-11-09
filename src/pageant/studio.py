@@ -50,10 +50,10 @@ from typing import Any, Literal
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import FloatRect, Frame, Locator, Page, async_playwright
 
-from pageant import apps, bundle, camera, loudness, mixdown, narrate, timeline
+from pageant import apps, bundle, camera, loudness, mixdown, narrate, report, timeline
 from pageant.apps import App, Running
 from pageant.camera import HEIGHT, WHOLE, WIDTH, View
-from pageant.film import CROP, FLAGS, FPS, Film, concat
+from pageant.film import CROP, FLAGS, FPS, FRAME_HEIGHT, FRAME_WIDTH, Film, concat
 
 HERE = Path(__file__).resolve().parent
 SCALE = 1.5
@@ -185,6 +185,8 @@ class _Caption:
     start: float
     text: str
     end: float | None = None
+    #: How long its voice took with the lead before it and the breath after; 0 for a line not spoken.
+    spoken: float = 0.0
 
 
 def _middle(box: FloatRect | None) -> tuple[float, float] | None:
@@ -216,6 +218,8 @@ class Studio:
     captions: list[_Caption] = field(default_factory=list)
     spoken_only: list[timeline.Cue] = field(default_factory=list)
     spoken: list[tuple[float, Path]] = field(default_factory=list)
+    #: When the voice spoke each line: its start and its end, in seconds of the video.
+    voiced: list[tuple[float, float]] = field(default_factory=list)
     clicks: list[float] = field(default_factory=list)
     marks: list[timeline.Mark] = field(default_factory=list)
     voice_until: float = 0.0
@@ -495,6 +499,7 @@ class Studio:
 
         self.spoken.append((self.clock() + VOICE_LEAD, clip.file))
         self.voice_until = self.clock() + VOICE_LEAD + clip.seconds
+        self.voiced.append((self.clock() + VOICE_LEAD, self.voice_until))
         return VOICE_LEAD + clip.seconds + VOICE_GAP
 
     def _close_caption(self) -> None:
@@ -515,10 +520,13 @@ class Studio:
         if clip:
             await self._voice_free()
         self._close_caption()
-        self.captions.append(_Caption(self.clock(), text))
+        caption = _Caption(self.clock(), text)
+        self.captions.append(caption)
         self._caption = text
         await self._show()
         natural = self._speak(clip) if clip else max(2.4, len(text) * 0.06)
+        if clip:
+            caption.spoken = natural
         await self._wait(natural if hold_ms is None else hold_ms / 1000)
 
     async def voice(self, key: str, extra_ms: float = 0) -> None:
@@ -895,6 +903,22 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
             *("-c", "copy", *language, "-movflags", "+faststart", str(marked)),
         )
         marked.replace(mp4)
+    lines = [
+        report.Line(caption.start, stopped if caption.end is None else caption.end, caption.text, caption.spoken)
+        for caption in studio.captions
+    ]
+    quality = report.build(
+        seconds=seconds,
+        fps=FPS,
+        size=(FRAME_WIDTH, FRAME_HEIGHT),
+        lines=lines,
+        voiced=studio.voiced,
+        runs=[shot.frames for shot in shots],
+        chapters=[(part.start, part.text) for part in parts],
+        loudness=report.measure_loudness(mp4) if lesson.narration else None,
+        target=lesson.loudness if lesson.narration else None,
+    )
+    report.write(folder, quality, f"{lesson.title['kicker']}: {lesson.title['title']}")
     bundle.write_page(lesson.page, folder)
     if not keep_work:
         shutil.rmtree(work)
@@ -907,6 +931,8 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
         "spoken": len(studio.spoken),
         "clicks": len(studio.clicks),
         "chapters": [f"{timeline.clock_time(part.start)} {part.text}" for part in parts],
+        "report": str(folder / report.MARKDOWN),
+        "to look at": quality["findings"],
     }
 
 
