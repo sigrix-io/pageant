@@ -159,6 +159,22 @@ def test_a_tag_holding_a_space_stops_the_command_and_says_how_to_write_it(tmp_pa
     assert not list(tmp_path.rglob("youtube.txt")), "no upload is written"
 
 
+def test_a_lessons_youtube_cut_is_the_recording_its_upload_is_written_for(tmp_path: Path) -> None:
+    _recorded(tmp_path)
+    # The first lesson's YouTube cut, recorded since: its chapters are timed to that video.
+    cut = tmp_path / bundle.YOUTUBE_CUT / FIRST.folder
+    cut.mkdir(parents=True)
+    (cut / "chapters.txt").write_text(
+        "0:00 Finding your way\n0:21 1 · Write a note\n0:40 2 · Add it\n1:22 3 · Find it again\n", encoding="utf-8"
+    )
+
+    written = youtube.write(tmp_path, PATH, PRODUCT)
+
+    assert written == [cut / youtube.UPLOAD, tmp_path / SECOND.folder / youtube.UPLOAD]
+    assert "0:21 1 · Write a note" in (cut / youtube.UPLOAD).read_text(encoding="utf-8")
+    assert not (tmp_path / FIRST.folder / youtube.UPLOAD).exists(), "the lesson's own recording is not the upload"
+
+
 def test_a_lesson_that_breaks_a_rule_leaves_no_upload_written(tmp_path: Path) -> None:
     _recorded(tmp_path)
     (tmp_path / SECOND.folder / "chapters.txt").write_text("0:00 Only\n", encoding="utf-8")

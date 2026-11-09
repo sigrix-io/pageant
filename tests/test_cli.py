@@ -146,9 +146,18 @@ def stand_in_studio(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     asked: list[dict[str, Any]] = []
 
     async def record(
-        lesson: _Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False
+        lesson: _Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False, youtube: bool = False
     ) -> dict[str, str]:
-        asked.append({"to": "record", "lesson": lesson, "out": out, "chromium": chromium, "keep_work": keep_work})
+        asked.append(
+            {
+                "to": "record",
+                "lesson": lesson,
+                "out": out,
+                "chromium": chromium,
+                "keep_work": keep_work,
+                "youtube": youtube,
+            }
+        )
         return {"bundle": str(out / lesson.page.folder)}
 
     async def rehearse(
@@ -185,13 +194,17 @@ def test_record_loads_the_lesson_beside_its_pages_and_records_it_into_out_beside
     [asked] = stand_in_studio
     assert asked["lesson"].page.slug == "notebook-lesson-1-your-first-note", "it imported the pages beside it"
     assert asked["out"] == pages.parent.resolve() / "out"
-    assert (asked["chromium"], asked["keep_work"]) == ("/opt/chromium", True)
+    assert (asked["chromium"], asked["keep_work"], asked["youtube"]) == ("/opt/chromium", True, False)
     assert json.loads(capsys.readouterr().out) == {"bundle": str(asked["out"] / "first-note")}
 
     monkeypatch.setenv("PAGEANT_CHROMIUM", "/from/the/environment")
     assert cli.main(["record", str(lesson), "--out", str(tmp_path / "elsewhere")]) == 0
     assert stand_in_studio[1]["out"] == tmp_path / "elsewhere"
     assert (stand_in_studio[1]["chromium"], stand_in_studio[1]["keep_work"]) == ("/from/the/environment", False)
+
+    # The YouTube cut is the same lesson, recorded into the same out, which the studio files under youtube/.
+    assert cli.main(["record", str(lesson), "--youtube"]) == 0
+    assert (stand_in_studio[2]["out"], stand_in_studio[2]["youtube"]) == (pages.parent.resolve() / "out", True)
 
 
 def test_rehearse_runs_the_lesson_beside_its_pages_with_no_ffmpeg_and_says_what_it_went_through(

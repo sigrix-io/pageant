@@ -292,12 +292,21 @@ filmed, and `pageant pack` before anything is zipped, with every reason at once.
 ### YouTube
 
 ```bash
+pageant record notebook/lesson.py --youtube
+```
+
+records the lesson's YouTube cut into `out/youtube/<folder>/`: the same lesson with no captions
+drawn into the picture, since YouTube shows `captions.vtt` itself, under the viewer's control and in
+the languages it translates to. The lesson's own recording, whose captions are part of the picture,
+is the one a learning site plays and a pack carries.
+
+```bash
 pageant youtube-text notebook/pages.py --link notebook-lesson-1-your-first-note=https://example.com/go/abc
 ```
 
-writes `youtube.txt` into each recorded lesson's folder: its title, description and tags, to paste
-into YouTube Studio beside the folder's `video.mp4`, `cover.jpg` (the thumbnail) and
-`captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
+writes `youtube.txt` into the folder of each recorded lesson's YouTube cut, or of the lesson's own
+recording where it has no cut: its title, description and tags, to paste into YouTube Studio
+beside that folder's `video.mp4`, `cover.jpg` (the thumbnail) and `captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
 `--link` gives), its chapters, what in it is scripted, where it sits in its path, and the
 product's `PRODUCT` lines. YouTube refuses a title over 100 characters, `<` or `>`, a description
 over 5,000 bytes and tags over 500 characters, and shows no chapters that break its rules, so each

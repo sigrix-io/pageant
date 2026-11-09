@@ -234,6 +234,9 @@ class Studio:
     #: A rehearsal (``rehearse``): nothing is spoken or filmed, and no wait is longer than
     #: ``REHEARSAL_WAIT``.
     rehearsal: bool = False
+    #: Whether a caption is drawn into the picture. The YouTube cut draws none: YouTube shows the
+    #: lesson's ``captions.vtt`` itself, which the studio writes either way.
+    captions_drawn: bool = True
     _caption: str | None = field(default=None, init=False, repr=False)
     _card: Mapping[str, Any] | None = field(default=None, init=False, repr=False)
     #: Takes away the script that hands what is on screen to the next document (``_carry``).
@@ -341,7 +344,7 @@ class Studio:
         return {
             "label": self.label,
             "corner": self.lesson.label_corner,
-            "caption": self._caption,
+            "caption": self._caption if self.captions_drawn else None,
             "card": card,
             "at": list(self.mouse),
         }
@@ -756,6 +759,7 @@ async def _staged(
     *,
     frames: Path | None = None,
     rehearsal: bool = False,
+    captions_drawn: bool = True,
 ) -> AsyncIterator[Studio]:
     """The lesson's app started, its page open in Chromium's headless shell under the overlay, the
     film painting its frames (into ``frames`` once it rolls, if given), the lesson's setup run on it,
@@ -787,7 +791,7 @@ async def _staged(
             page.set_default_timeout(WAIT_SECONDS * 1000)
             # The film paints from before the first page loads: a page loads only as frames are painted.
             film = Film(await context.new_cdp_session(page), frames)
-            studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal)
+            studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal, captions_drawn=captions_drawn)
             film.before = studio._frame
             studio.terminal_url = f"http://127.0.0.1:{files.server_address[1]}/"
             studio.shell_env = {**running.env, "PYTHONUNBUFFERED": "1", "TERM": "xterm-256color"}
@@ -830,14 +834,16 @@ async def _staged(
         running.stop()
 
 
-async def _capture(lesson: Lesson, out: Path, work: Path, chromium: str | None) -> tuple[Studio, float]:
+async def _capture(
+    lesson: Lesson, out: Path, work: Path, chromium: str | None, *, captions_drawn: bool = True
+) -> tuple[Studio, float]:
     """Record the lesson's frames into its work folder, and its poster into its folder ``out``; the
     studio's log of it, and how long the video is, in seconds."""
 
     clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice), lesson.pronounce) if lesson.narration else {}
     frames = work / "frames"
     frames.mkdir()
-    async with _staged(lesson, out, work, chromium, clips, frames=frames) as studio:
+    async with _staged(lesson, out, work, chromium, clips, frames=frames, captions_drawn=captions_drawn) as studio:
         film = studio.film
         await studio.page.mouse.move(*studio.mouse)
         await studio.card(lesson.title, 700)
@@ -856,13 +862,21 @@ async def _capture(lesson: Lesson, out: Path, work: Path, chromium: str | None) 
     return studio, stopped
 
 
-async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False) -> dict[str, Any]:
-    """Record ``lesson`` into a folder of its own in ``out``, its bundle, and say what was made."""
+async def record(
+    lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False, youtube: bool = False
+) -> dict[str, Any]:
+    """Record ``lesson`` into a folder of its own in ``out``, its bundle, and say what was made.
 
-    folder = out / lesson.slug
+    ``youtube`` records its YouTube cut instead, into ``out/youtube/<folder>/``
+    (``bundle.YOUTUBE_CUT``): the same lesson with no caption drawn into the picture, since YouTube
+    shows the ``captions.vtt`` written beside it, which a viewer can turn off or have translated. The
+    lesson's own recording, whose captions are part of the picture, is what a learning site plays.
+    """
+
+    folder = out / bundle.YOUTUBE_CUT / lesson.slug if youtube else out / lesson.slug
     folder.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f"{lesson.slug}-", dir=out))
-    studio, stopped = await _capture(lesson, folder, work, chromium)
+    studio, stopped = await _capture(lesson, folder, work, chromium, captions_drawn=not youtube)
     shots = studio.film.shots
     if not shots:
         raise RuntimeError("The film kept no frames, so there is nothing to encode.")

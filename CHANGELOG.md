@@ -8,6 +8,12 @@ described in `VERSIONING.md`.
 
 ### Added
 
+- A lesson's YouTube cut: `pageant record LESSON --youtube` records the same lesson with no captions
+  drawn into the picture, into `out/youtube/<folder>/` (`bundle.YOUTUBE_CUT`), for YouTube to show
+  the `captions.vtt` written beside it, which a viewer can turn off or have translated. The lesson's
+  own recording keeps its captions in the picture for a learning site, and the pack takes it.
+  `pageant youtube-text` writes each lesson's upload from its YouTube cut where one was recorded,
+  as its chapters are timed to that video.
 - A recording's report (`pageant.report`): `report.md` and `report.json` beside the video, and what
   they found worth a look in what `pageant record` prints. It holds the checks made by hand before
   publishing, read off the recording's own log: the loudness and true peak against the lesson's

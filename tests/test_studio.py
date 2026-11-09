@@ -314,6 +314,38 @@ def _first_frame(tmp_path: Path, chromium: str | None) -> dict[str, Any]:
     return seen
 
 
+def test_the_youtube_cut_draws_no_caption_into_the_picture_and_logs_each_one(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    """``record(youtube=True)`` films the lesson for YouTube, which shows its ``captions.vtt`` itself."""
+
+    seen: dict[str, Any] = {}
+    staged = Lesson(
+        page=PAGE,
+        title={"kicker": "", "title": "", "sub": ""},
+        narration={},
+        run=lambda s: asyncio.sleep(0),
+        app=_Site(),
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+
+    async def go() -> None:
+        async with studio._staged(staged, tmp_path, work, chromium, {}, captions_drawn=False) as s:
+            await s.card(None)
+            await s.chapter("1 · Sell")
+            await s.say("A line YouTube shows itself.", 0)
+            await s.page.wait_for_function(STILL)
+            seen.update(await s.page.evaluate(READ))
+            seen["logged"] = [caption.text for caption in s.captions]
+
+    asyncio.run(go())
+
+    assert seen["caption"] is None, "no caption is drawn into the picture"
+    assert seen["label"] == "1 · Sell", "what else is on screen still is"
+    assert seen["logged"] == ["A line YouTube shows itself."], "the captions file still has the line"
+
+
 def test_the_page_a_link_goes_to_has_the_label_the_caption_and_the_pointer_in_its_first_frame(
     tmp_path: Path, chromium: str | None
 ) -> None:

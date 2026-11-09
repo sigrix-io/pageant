@@ -113,7 +113,11 @@ def _record(args: argparse.Namespace) -> int:
     from pageant import studio
 
     lesson = _lesson(args.lesson)
-    made = asyncio.run(studio.record(lesson, _out(args, args.lesson), chromium=args.chromium, keep_work=args.keep_work))
+    made = asyncio.run(
+        studio.record(
+            lesson, _out(args, args.lesson), chromium=args.chromium, keep_work=args.keep_work, youtube=args.youtube
+        )
+    )
     sys.stdout.write(json.dumps(made, indent=2, ensure_ascii=False) + "\n")
     return 0
 
@@ -188,6 +192,11 @@ def _parser() -> argparse.ArgumentParser:
         help="a Chromium headless shell (chrome-headless-shell) to drive instead of Playwright's (or PAGEANT_CHROMIUM)",
     )
     record.add_argument("--keep-work", action="store_true", help="keep the frames, the audio and the app's work folder")
+    record.add_argument(
+        "--youtube",
+        action="store_true",
+        help=f"record the YouTube cut, with no captions drawn into the picture, into {bundle.YOUTUBE_CUT}/ in --out",
+    )
     record.set_defaults(run=_record)
 
     rehearse = commands.add_parser(

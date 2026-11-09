@@ -157,11 +157,21 @@ def text_of(upload: Upload) -> str:
     return f"TITLE\n{upload.title}\n\nDESCRIPTION\n{upload.description}\n\nTAGS\n{', '.join(upload.tags)}\n"
 
 
+def recorded_for_youtube(out: Path, page: bundle.Page) -> Path:
+    """The folder of ``page``'s recording that goes to YouTube: its YouTube cut where one was recorded."""
+
+    cut = out / bundle.YOUTUBE_CUT / page.folder
+    return cut if (cut / bundle.YOUTUBE_CHAPTERS).is_file() else out / page.folder
+
+
 def write(out: Path, path: bundle.LearningPath, product: Product, links: Mapping[str, str] | None = None) -> list[Path]:
     """Write ``youtube.txt`` into each recorded lesson of ``path`` in ``out``, or nothing.
 
-    ``links`` gives a lesson's tracked link by its slug. Every lesson is read and held to YouTube's
-    rules before the first file is written, so one that breaks a rule leaves none half done.
+    A lesson's YouTube cut (``pageant record --youtube``, in ``out/youtube/<folder>/``) is the one
+    written for where it was recorded, as the video uploaded is that cut and its chapters are timed to
+    it; otherwise the lesson's own recording is. ``links`` gives a lesson's tracked link by its slug.
+    Every lesson is read and held to YouTube's rules before the first file is written, so one that
+    breaks a rule leaves none half done.
     """
 
     links = dict(links or {})
@@ -171,22 +181,23 @@ def write(out: Path, path: bundle.LearningPath, product: Product, links: Mapping
     for slug, link in links.items():
         if not link.startswith("https://"):
             raise ValueError(f"{slug}: a link starts with https://")
+    folders = {page.slug: recorded_for_youtube(out, page) for page in path.lessons}
     missing = [
         f"{page.folder}/{bundle.YOUTUBE_CHAPTERS}"
         for page in path.lessons
-        if not (out / page.folder / bundle.YOUTUBE_CHAPTERS).is_file()
+        if not (folders[page.slug] / bundle.YOUTUBE_CHAPTERS).is_file()
     ]
     if missing:
         raise FileNotFoundError("Record these lessons first; missing: " + ", ".join(missing))
     uploads = [
         (
-            out / page.folder / UPLOAD,
+            folders[page.slug] / UPLOAD,
             upload_for(
                 page,
                 number=number,
                 path=path,
                 product=product,
-                chapters_text=(out / page.folder / bundle.YOUTUBE_CHAPTERS).read_text(encoding="utf-8"),
+                chapters_text=(folders[page.slug] / bundle.YOUTUBE_CHAPTERS).read_text(encoding="utf-8"),
                 link=links.get(page.slug, ""),
             ),
         )
@@ -197,4 +208,4 @@ def write(out: Path, path: bundle.LearningPath, product: Product, links: Mapping
     return [target for target, _ in uploads]
 
 
-__all__ = ["UPLOAD", "Product", "Upload", "chapters", "text_of", "upload_for", "write"]
+__all__ = ["UPLOAD", "Product", "Upload", "chapters", "recorded_for_youtube", "text_of", "upload_for", "write"]
