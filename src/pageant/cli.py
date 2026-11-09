@@ -4,7 +4,7 @@
     pageant rehearse notebook/lesson.py      # its steps run through quickly, nothing spoken or filmed
     pageant record notebook/lesson.py        # the lesson the file names as LESSON, into notebook/out/
     pageant pack notebook/pages.py           # the path the file names as PATH, as notebook/out/lessons.zip
-    pageant youtube-text notebook/pages.py   # each lesson's youtube.txt, from PATH and PRODUCT
+    pageant youtube-text notebook/pages.py   # each lesson's youtube.txt, from PATH and PRODUCT (and SHORTS)
 
 A lesson file and a pages file are Python, loaded as running them would load them: their own
 folder first on the import path, so a lesson imports the pages beside it. The recordings go into
@@ -150,8 +150,11 @@ def _youtube_text(args: argparse.Namespace) -> int:
     module = load(args.pages)
     path = _named(module, args.pages, "PATH", bundle.LearningPath)
     product = _named(module, args.pages, "PRODUCT", youtube.Product)
+    shorts = getattr(module, "SHORTS", ())
+    if not isinstance(shorts, tuple) or not all(isinstance(short, youtube.Short) for short in shorts):
+        raise Refused(f"{args.pages}: SHORTS is a tuple of pageant.youtube.Short")
     try:
-        written = youtube.write(_out(args, args.pages), path, product, dict(args.link))
+        written = youtube.write(_out(args, args.pages), path, product, dict(args.link), shorts)
     except (FileNotFoundError, ValueError) as refused:
         raise Refused(str(refused)) from None
     for target in written:
@@ -226,7 +229,7 @@ def _parser() -> argparse.ArgumentParser:
     text = commands.add_parser(
         "youtube-text", help="write each recorded lesson's YouTube title, description and tags as youtube.txt"
     )
-    text.add_argument("pages", type=Path, help="the pages file, which names PATH and PRODUCT")
+    text.add_argument("pages", type=Path, help="the pages file, which names PATH and PRODUCT, and may name SHORTS")
     text.add_argument("--out", type=Path, help=out)
     text.add_argument(
         "--link",

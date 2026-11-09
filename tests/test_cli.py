@@ -108,6 +108,30 @@ def test_youtube_text_writes_each_upload_or_says_what_stops_it(
     assert "a link starts with https://" in capsys.readouterr().err
 
 
+def test_youtube_text_writes_the_shorts_a_pages_file_names_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pages = _project(tmp_path)
+    out = tmp_path / "recorded"
+    _recorded(out)
+    short = (
+        "SHORTS = (Short(page=Page(folder='first-note-short', slug='first-note-short', title='A note in 30 seconds',"
+        " summary='Write one.', body='A Short.'), lesson=FIRST),)\n"
+    )
+    pages.write_text(
+        PAGES.replace("from pageant.youtube import Product", "from pageant.youtube import Product, Short") + short
+    )
+    (out / "first-note-short").mkdir()
+    (out / "first-note-short" / "video.mp4").write_bytes(b"video")
+
+    assert cli.main(["youtube-text", str(pages), "--out", str(out)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == str(out / "first-note-short" / "youtube.txt")
+
+    pages.write_text(PAGES + "SHORTS = [1]\n", encoding="utf-8")
+    assert cli.main(["youtube-text", str(pages), "--out", str(out)]) == 1
+    assert "SHORTS is a tuple of pageant.youtube.Short" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("given", ["https://example.com/go/abc", "=https://example.com/go/abc", "first-note= "])
 def test_a_link_is_a_slug_and_an_address(tmp_path: Path, capsys: pytest.CaptureFixture[str], given: str) -> None:
     pages = _project(tmp_path)

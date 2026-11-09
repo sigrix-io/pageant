@@ -19,6 +19,10 @@ against the frames the film kept.
 - **The end**: the seconds after the last line, which YouTube's end screen takes (``END_MIN`` to
   ``END_MAX``).
 - **Chapters**: what YouTube makes chapters of (``youtube.chapters``' rules).
+- **A vertical video**, a phone's (``camera.PHONE``), is a Short on YouTube if it is ``SHORT_MAX``
+  seconds or less. A Short has no end screen and no chapters, and plays again from the start, so
+  its end is the seconds after its last line, ``SHORT_TAIL`` at most, and its chapters are not held
+  to YouTube's rules.
 
 A finding is something to look at, not a refusal: the video is written whatever the report says.
 Everything here but ``measure_loudness`` is the standard library's arithmetic, so it is tested without
@@ -59,6 +63,10 @@ END_MIN = 5.0
 END_MAX = 20.0
 #: What YouTube makes chapters of: the first at 0:00, at least three, each at least ten seconds.
 CHAPTERS_MIN = 3
+#: The longest vertical video YouTube shows as a Short, in seconds.
+SHORT_MAX = 180.0
+#: The seconds a Short may run after its last line before it plays again from the start.
+SHORT_TAIL = 3.0
 
 
 @dataclass(frozen=True)
@@ -143,11 +151,20 @@ def build(
     """The report on a recording ``seconds`` long, from its log.
 
     ``voiced`` is when the voice spoke, ``runs`` how many frames in a row each kept picture is, in
-    order (the film's shots), and ``chapters`` each chapter's start and title.
+    order (the film's shots), and ``chapters`` each chapter's start and title. A ``size`` taller than
+    it is wide is a vertical video, held to a Short's rules.
     """
 
     found: list[str] = []
-    report: dict[str, Any] = {"seconds": round(seconds, 1), "size": f"{size[0]}x{size[1]}", "fps": fps}
+    vertical = size[1] > size[0]
+    report: dict[str, Any] = {
+        "seconds": round(seconds, 1),
+        "size": f"{size[0]}x{size[1]}",
+        "fps": fps,
+        "vertical": vertical,
+    }
+    if vertical and seconds > SHORT_MAX:
+        found.append(f"The video is {seconds:.1f} s; YouTube shows a vertical video as a Short up to {SHORT_MAX:g}.")
 
     if loudness is not None:
         report["loudness"] = {"integrated": loudness.integrated, "true_peak": loudness.true_peak, "target": target}
@@ -222,13 +239,18 @@ def build(
 
     after = seconds - last
     report["end"] = {"after_last_line": round(after, 1)}
-    if spoken and not END_MIN <= after <= END_MAX:
+    if spoken and vertical and after > SHORT_TAIL:
+        found.append(
+            f"The video runs {after:.1f} s after its last line; a Short has no end screen and plays again "
+            f"from the start, so {SHORT_TAIL:g} at most."
+        )
+    elif spoken and not vertical and not END_MIN <= after <= END_MAX:
         found.append(
             f"The video runs {after:.1f} s after its last line; YouTube's end screen takes {END_MIN:g} to {END_MAX:g}."
         )
 
     report["chapters"] = [{"at": round(start, 1), "title": title} for start, title in chapters]
-    if chapters:
+    if chapters and not vertical:
         if chapters[0][0] > 0:
             found.append(f"The first chapter starts at {_clock(chapters[0][0])}; YouTube wants 0:00.")
         if len(chapters) < CHAPTERS_MIN:
@@ -250,7 +272,8 @@ def markdown(report: dict[str, Any], title: str) -> str:
     rows = [
         (
             "Length",
-            f"{_clock(report['seconds'])} ({report['seconds']:g} s), {report['size'].replace('x', '×')} at {report['fps']} fps",
+            f"{_clock(report['seconds'])} ({report['seconds']:g} s), {report['size'].replace('x', '×')} at {report['fps']} fps"
+            + (", vertical" if report.get("vertical") else ""),
         )
     ]
     sound = report.get("loudness")

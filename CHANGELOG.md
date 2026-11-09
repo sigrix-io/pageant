@@ -19,6 +19,15 @@ described in `VERSIONING.md`.
   optional kicker and brand) beside its mark, and the frame it chose with `Studio.thumbnail()`, which
   is zoomed where the camera was. It is drawn on a page of Pageant's own once the film stops rolling,
   in Inter where the fonts answer.
+- A phone's screen (`Lesson.screen`, `camera.PHONE`): a lesson filmed on a 360×640 screen painted at 3,
+  for a vertical video of 1080×1920, its page laid out for the phone and the overlay too, with the
+  caption above the foot a vertical video's player covers, and a fingertip for the pointer. The
+  camera stays still on it, so it takes no `zoom` and no thumbnail, and it keeps its captions in the
+  picture rather than having a YouTube cut. The report holds a vertical video to a Short's rules: three
+  minutes at most, no end screen and no chapters, and three seconds after its last line at most.
+- YouTube Shorts' uploads (`youtube.Short`): a pages file's `SHORTS`, each a lesson of its own on a
+  phone's screen, from a lesson of the path, whose `youtube.txt` links to that lesson's page and names
+  it as its Related video.
 - A recording's report (`pageant.report`): `report.md` and `report.json` beside the video, and what
   they found worth a look in what `pageant record` prints. It holds the checks made by hand before
   publishing, read off the recording's own log: the loudness and true peak against the lesson's
@@ -89,6 +98,9 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- The screen a lesson is filmed on is set on its page (`Emulation.setDeviceMetricsOverride`, keeping the
+  browser's own scale). Chromium's headless shell opens every page at 1280×720 whatever `--window-size`
+  says, which the studio passed it and which only ever matched by chance.
 - A page on another site than the one before it (a payment provider's checkout, and the app it sends
   the buyer back to) held its CSS animations at their first keyframe: a menu that fades in was open,
   and took clicks, but never showed, and a title card never came up. Chromium draws such a page with a

@@ -14,7 +14,7 @@ and a paste to one input; and the film (``film.py``): the page's time moving a f
 a page on another site as well, which Chromium starts a renderer for with its own clock, the
 pointer drawn along its path a point a frame, the camera framing a spotlight and coming back out, a
 still screen held in one file, a zoomed frame taken whole, and a click while zoomed that goes to
-another page not stopping it.
+another page not stopping it; and a phone's screen, filmed upright with the overlay laid out for it.
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
@@ -126,6 +126,17 @@ BAR = """<!doctype html>
 </body></html>
 """
 
+#: A page for a phone's screen: a line far down it, to put where a test wants it.
+PHONE = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On a phone</title></head>
+<body style="margin:0;font:16px/1.4 sans-serif">
+  <div style="height:1500px"></div>
+  <p id="line" style="margin:0 24px;height:40px">A line far down the page</p>
+  <div style="height:1500px"></div>
+</body></html>
+"""
+
 #: Two buttons, one under the other, and a banner that comes in above them when the page is told to:
 #: what the press lands on shows whether a click went where its button was by then.
 SHIFTING = """<!doctype html>
@@ -170,6 +181,7 @@ def _transitioning(name: str, seconds: float, body: str) -> str:
 PAGES = {
     "/": HOME,
     "/bar": BAR,
+    "/phone": PHONE,
     "/shifting": SHIFTING,
     "/hanging": HANGING,
     **{
@@ -1233,3 +1245,71 @@ def test_a_rehearsal_that_stops_on_a_still_page_keeps_that_page_too(tmp_path: Pa
         _rehearse(tmp_path, run, chromium)
 
     assert _png_size((tmp_path / FOLDER / "failure.png").read_bytes()) == (1920, 1080)
+
+
+#: Where the caption is on the screen, read from the page.
+CAPTION_BOX = """() => {
+  const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
+  const r = root.children[2].children[0].getBoundingClientRect();
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}"""
+
+
+def test_a_phones_screen_is_filmed_upright_with_the_overlay_laid_out_for_it(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    middle = "() => { const r = document.querySelector('#line').getBoundingClientRect(); return r.top + r.height / 2; }"
+
+    async def run(s: Studio) -> None:
+        seen["screen"] = await s.page.evaluate("[innerWidth, innerHeight, devicePixelRatio]")
+        seen["mouse"] = s.mouse
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "phone")
+        await s.arrive("**/phone")
+        await s.say("A caption long enough to take two lines on a phone's screen.", 0)
+        await s.page.wait_for_function(STILL)
+        seen["caption"] = await s.page.evaluate(CAPTION_BOX)
+        line = s.page.locator("#line")
+        # Its foot above the phone's captions, then in the band they cover, which on a computer's
+        # screen is clear of them: the page is scrolled for the second only.
+        for where, top in (("above the captions", 330), ("over the captions", 430)):
+            await line.evaluate(f"el => window.scrollTo(0, el.offsetTop - {top})")
+            await s.glide(line)
+            seen[where] = await s.page.evaluate(middle)
+        seen["pointer"] = (await s.page.evaluate(READ))["pointer"]
+        seen["at"] = s.mouse
+        with pytest.raises(ValueError, match="zooms on the landscape screen only"):
+            await s.spot(line, zoom=2.0)
+
+    shots = _filmed(tmp_path, run, chromium, screen=camera.PHONE)
+
+    assert seen["screen"] == [360, 640, 3]
+    assert seen["mouse"] == (180, 320), "the pointer starts in the middle of the phone's screen"
+    assert {_jpeg_size(shot.file.read_bytes()) for shot in shots} == {(1080, 1920)}
+    caption = seen["caption"]
+    assert caption["bottom"] == pytest.approx(640 - 140, abs=1), "above the foot a vertical video's player covers"
+    assert caption["top"] >= 640 - camera.PHONE.band, "in the band a step keeps what it points at above"
+    assert 0 < caption["left"] < caption["right"] < 360
+    assert seen["above the captions"] == pytest.approx(330 + 20, abs=1), "in view: not scrolled to"
+    assert seen["over the captions"] == pytest.approx(320, abs=4), "scrolled to the middle"
+    x, y = (float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", seen["pointer"]))
+    assert (x + 17, y + 17) == pytest.approx(seen["at"], abs=1), "a fingertip, drawn round its point"
+
+
+def test_a_phones_screen_takes_no_zoom_no_thumbnail_and_no_youtube_cut(tmp_path: Path) -> None:
+    async def run(s: Studio) -> None:
+        return None
+
+    lesson: dict[str, Any] = {"page": PAGE, "title": {"title": ""}, "narration": {}, "run": run, "app": _Site()}
+
+    with pytest.raises(ValueError, match="zooms on the landscape screen only"):
+        Lesson(**lesson, screen=camera.PHONE, zoom=2.0)
+    with pytest.raises(ValueError, match="thumbnail is composed for a lesson on the landscape screen only"):
+        Lesson(**lesson, screen=camera.PHONE, thumbnail={"title": "Your first note"})
+    phone = Lesson(**lesson, screen=camera.PHONE)
+    with pytest.raises(ValueError, match="keeps its captions in the picture"):
+        asyncio.run(studio.record(phone, tmp_path, youtube=True))
+    assert not list(tmp_path.iterdir()), "refused before anything is written"
+    assert Lesson(**lesson, zoom=2.0, thumbnail={"title": "Your first note"}).screen == camera.LANDSCAPE

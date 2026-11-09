@@ -5,7 +5,8 @@ description ends with is a product's :class:`~pageant.youtube.Product` now, wher
 constants of its own; the rules are YouTube's and stay as they were: a title of 100 characters at
 most, no ``<`` or ``>``, a description of 5,000 bytes at most, tags of 500 characters as YouTube
 counts them, and chapters YouTube shows. So is each tag, which is one word. A lesson that breaks one
-leaves no upload written.
+leaves no upload written. A Short is a lesson of its own, with no chapters, whose upload sends its
+viewers to the lesson it is from.
 """
 
 from __future__ import annotations
@@ -46,6 +47,18 @@ PRODUCT = youtube.Product(
     all_lessons="https://learn.example.com/learn/tag/notebook",
     scripted="Its answers are scripted, so the lesson is the same every time it is recorded.",
     tags=("notebook", "notesapp", "tutorial"),
+)
+
+#: A vertical video from the first lesson, filmed on a phone's screen.
+SHORT = youtube.Short(
+    page=bundle.Page(
+        folder="first-note-short",
+        slug="notebook-in-30-seconds-your-first-note",
+        title="Your first note in Notebook, in 30 seconds",
+        summary="Write a note, add it, and there it is.",
+        body="A Short from lesson 1.\n",
+    ),
+    lesson=FIRST,
 )
 
 #: A recording's chapters as ``timeline.youtube_chapters`` writes them.
@@ -199,3 +212,56 @@ def test_a_lesson_not_recorded_yet_is_named(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match=re.escape(f"Record these lessons first; missing: {FIRST.folder}/")):
         youtube.write(tmp_path, PATH, PRODUCT)
+
+
+def _filmed(out: Path, short: youtube.Short = SHORT) -> None:
+    (out / short.page.folder).mkdir(parents=True, exist_ok=True)
+    (out / short.page.folder / bundle.VIDEO).write_bytes(b"video")
+
+
+def test_a_short_gets_its_upload_written_sending_its_viewers_to_its_lesson(tmp_path: Path) -> None:
+    _recorded(tmp_path)
+    _filmed(tmp_path)
+
+    written = youtube.write(tmp_path, PATH, PRODUCT, shorts=(SHORT,))
+
+    target = tmp_path / SHORT.page.folder / youtube.UPLOAD
+    assert written == [*(tmp_path / page.folder / youtube.UPLOAD for page in PATH.lessons), target]
+    assert target.read_text(encoding="utf-8") == (
+        f"TITLE\n{SHORT.page.title}\n\n"
+        "DESCRIPTION\n"
+        f"{SHORT.page.summary}\n\n"
+        f"The whole lesson, {FIRST.title}, on learn.example.com: https://learn.example.com/learn/{FIRST.slug}\n\n"
+        f"{PRODUCT.scripted}\n\n"
+        "Notebook keeps your notes on one page.\n"
+        "Get Notebook: https://example.com/notebook\n\n"
+        "TAGS\nnotebook, notesapp, tutorial\n\n"
+        f"RELATED VIDEO\n{FIRST.title}: its video, once it is on YouTube\n"
+    )
+    assert "RELATED VIDEO" not in written[0].read_text(encoding="utf-8"), "a lesson's upload has none"
+
+
+def test_a_shorts_related_video_is_its_lessons_once_uploaded_and_its_link_its_own(tmp_path: Path) -> None:
+    uploaded = dataclasses.replace(FIRST, youtube_url="https://www.youtube.com/watch?v=abc123")
+    short = dataclasses.replace(SHORT, lesson=uploaded)
+    path = dataclasses.replace(PATH, lessons=(uploaded, SECOND))
+    _recorded(tmp_path)
+    _filmed(tmp_path, short)
+    link = "https://learn.example.com/go/short1"
+
+    youtube.write(tmp_path, path, PRODUCT, {short.page.slug: link}, shorts=(short,))
+
+    text = (tmp_path / short.page.folder / youtube.UPLOAD).read_text(encoding="utf-8")
+    assert f"on learn.example.com: {link}\n" in text
+    assert text.endswith(f"RELATED VIDEO\n{FIRST.title}: https://www.youtube.com/watch?v=abc123\n")
+
+
+def test_a_short_not_filmed_yet_or_from_no_lesson_of_the_path_is_named(tmp_path: Path) -> None:
+    _recorded(tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=re.escape(f"missing: {SHORT.page.folder}/{bundle.VIDEO}")):
+        youtube.write(tmp_path, PATH, PRODUCT, shorts=(SHORT,))
+    stray = dataclasses.replace(SHORT, lesson=dataclasses.replace(FIRST, slug="notebook-lesson-9"))
+    with pytest.raises(ValueError, match=f"these are not: {SHORT.page.slug}"):
+        youtube.write(tmp_path, PATH, PRODUCT, shorts=(stray,))
+    assert not list(tmp_path.rglob("youtube.txt"))

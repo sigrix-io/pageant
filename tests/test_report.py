@@ -4,7 +4,8 @@ One recording that gives nothing to look at, then each check on its own: the lou
 peak, a caption held past its voice, a stretch with no voice, a picture that does not change, motion
 with too few distinct frames, the seconds after the last line, and the chapters YouTube makes. The
 still picture and the silences are read between the first line and the end of the last, so a title
-card or an end card held on screen is not one. Standard library only, as the module is.
+card or an end card held on screen is not one. A vertical video is held to a Short's rules instead:
+no end screen, no chapters, and three minutes at most. Standard library only, as the module is.
 """
 
 from __future__ import annotations
@@ -57,12 +58,13 @@ class Recording:
         default_factory=lambda: [(0.0, "One"), (20.0, "Two"), (40.0, "Three")]
     )
     loudness: report.Loudness | None = dataclasses.field(default_factory=lambda: report.Loudness(-14.2, -1.8))
+    size: tuple[int, int] = (1920, 1080)
 
     def built(self) -> dict[str, Any]:
         return report.build(
             seconds=self.seconds,
             fps=60,
-            size=(1920, 1080),
+            size=self.size,
             lines=self.lines,
             voiced=self.voiced,
             runs=self.runs,
@@ -143,6 +145,38 @@ def test_a_title_card_and_an_end_card_held_still_are_not_a_still_picture() -> No
 
     assert built["picture"]["longest_still"]["seconds"] < 1
     assert not any("does not change" in finding for finding in built["findings"])
+
+
+#: A Short of that minute: the same lines on a phone's screen, ending a breath after its last one.
+SHORT = {"size": (1080, 1920), "seconds": 50.0, "runs": [1] * 3000}
+
+
+def test_a_vertical_video_is_held_to_a_shorts_rules_not_to_an_end_screens_or_chapters() -> None:
+    # Two chapters, and a second and a half after the last line: wrong for YouTube's landscape video,
+    # and right for a Short, which has no chapters and plays again from the start.
+    built = dataclasses.replace(Recording(), chapters=[(0.0, "One"), (30.0, "Two")], **SHORT).built()
+
+    assert built["vertical"] is True
+    assert built["end"] == {"after_last_line": 1.5}
+    assert built["findings"] == []
+    assert "| Length | 0:50.0 (50 s), 1080×1920 at 60 fps, vertical |" in report.markdown(built, "Short")
+
+
+@pytest.mark.parametrize(
+    ("change", "says"),
+    [
+        (
+            {"seconds": 54.0, "runs": [1] * 3000 + [240]},
+            "runs 5.5 s after its last line; a Short has no end screen and plays again from the start, so 3 at most",
+        ),
+        ({"seconds": 190.0, "runs": [1] * 3000 + [8400]}, "YouTube shows a vertical video as a Short up to 180"),
+    ],
+    ids=["long tail", "too long"],
+)
+def test_each_of_a_shorts_checks_finds_what_it_is_for(change: dict[str, Any], says: str) -> None:
+    findings = dataclasses.replace(Recording(), **{**SHORT, **change}).built()["findings"]
+
+    assert any(says in finding for finding in findings), findings
 
 
 def test_a_line_nothing_spoke_is_not_held_against_its_voice() -> None:
