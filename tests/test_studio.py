@@ -10,7 +10,8 @@ uses with nothing spoken or filmed, against a small app of their own. They also 
 label to its corner and its seconds on every page, the spotlight to coming up where its element is
 and to being down while the page scrolls to the next, a step to scrolling only to what is not in
 view (a control in a sticky top bar is, and Chromium would scroll the page under the bar for it),
-and a paste to one input; and the film (``film.py``): the page's time moving a frame at a time, the
+and a paste to one input; and the film (``film.py``): the page's time moving a frame at a time, on
+a page on another site as well, which Chromium starts a renderer for with its own clock, the
 pointer drawn along its path a point a frame, the camera framing a spotlight and coming back out, a
 still screen held in one file, a zoomed frame taken whole, and a click while zoomed that goes to
 another page not stopping it.
@@ -45,8 +46,9 @@ try:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
-    # The film and the studio drive Chromium through Playwright, which only the record extra installs.
-    from pageant import film, studio
+    # The film and the studio drive Chromium through Playwright, and the voice takes numpy: only the
+    # record extra installs either.
+    from pageant import film, narrate, studio
     from pageant.studio import Lesson, Studio
 except ModuleNotFoundError as missing:
     if REQUIRED:
@@ -124,9 +126,64 @@ BAR = """<!doctype html>
 </body></html>
 """
 
+#: Two buttons, one under the other, and a banner that comes in above them when the page is told to:
+#: what the press lands on shows whether a click went where its button was by then.
+SHIFTING = """<!doctype html>
+<html><head><meta charset="utf-8"><title>A page that moves</title></head>
+<body style="margin:0;padding:24px;font:16px/1.4 sans-serif">
+  <div id="slot"></div>
+  <button id="target" type="button" style="display:block;width:200px;height:36px;margin-top:240px"
+    onclick="window.clicked = this.id">Sales</button>
+  <button id="below" type="button" style="display:block;width:200px;height:36px;margin-top:4px"
+    onclick="window.clicked = this.id">Payouts</button>
+  <script>
+    window.shiftIn = (ms) => setTimeout(() => {
+      const banner = document.createElement("div");
+      banner.style.height = "40px";
+      document.getElementById("slot").append(banner);
+    }, ms);
+  </script>
+</body></html>
+"""
+
+#: A page that opens a request its server never answers while the test runs, as a stream or a long poll does.
+HANGING = """<!doctype html>
+<html><head><meta charset="utf-8"><title>A page that keeps a request open</title></head>
+<body style="margin:0;padding:24px;font:16px/1.4 sans-serif">
+  <p>Listening.</p>
+  <script>fetch("/never").catch(() => {}); window.asked = true;</script>
+</body></html>
+"""
+
+
+def _transitioning(name: str, seconds: float, body: str) -> str:
+    """A page that changes to the next with a view transition lasting ``seconds``, as an app's can."""
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>{name}</title>
+<style>@view-transition {{ navigation: auto; }}
+::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {{ animation-duration: {seconds}s; }}</style>
+</head><body style="margin:0;padding:24px;font:16px/1.4 sans-serif">{body}</body></html>
+"""
+
+
 PAGES = {
     "/": HOME,
     "/bar": BAR,
+    "/shifting": SHIFTING,
+    "/hanging": HANGING,
+    **{
+        f"/fade-{seconds}": _transitioning("Before", seconds, f'<a id="go" href="/faded-{seconds}">Next</a>')
+        for seconds in (1.4, 4)
+    },
+    **{
+        f"/faded-{seconds}": _transitioning(
+            "After",
+            seconds,
+            '<button id="hit" type="button" onclick="window.hits = (window.hits || 0) + 1">Hit</button>',
+        )
+        for seconds in (1.4, 4)
+    },
     "/b": _other("Page B"),
     "/slow": _other("A slow page"),
     "/done": _other("Posted"),
@@ -144,6 +201,9 @@ class _Pages(BaseHTTPRequestHandler):
         if path in {"/slow", "/stall.js"}:
             # Long enough for the steps after the click to run while it loads.
             time.sleep(0.6)
+        if path == "/never":
+            # Longer than the test that asked for it runs; the server's threads are daemons.
+            time.sleep(60)
         body = "window.stalled = true;\n" if path == "/stall.js" else PAGES.get(path)
         if body is None:
             self.send_error(404)
@@ -751,6 +811,157 @@ def _filmed(tmp_path: Path, run: Callable[[Studio], Awaitable[None]], chromium: 
             return list(s.film.shots)
 
     return asyncio.run(go())
+
+
+#: A card's points, read from the page: each row's mark and its words.
+POINTS = """() => {
+  const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
+  const list = root.children[2].children[2].children[4];
+  return getComputedStyle(list).display === "none"
+    ? [] : [...list.children].map((row) => [row.children[0].textContent, row.children[1].textContent]);
+}"""
+
+
+def test_a_click_lands_on_its_element_when_the_page_moves_it_while_the_pointer_is_on_its_way(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.goto(s.page.url + "shifting")
+        await s.page.wait_for_load_state("load")
+        before = await s.page.locator("#target").bounding_box()
+        # In the page's time, a little after the glide has read the button's box and set off.
+        await s.page.evaluate("window.shiftIn(650)")
+        await s.click(s.page.locator("#target"))
+        after = await s.page.locator("#target").bounding_box()
+        seen.update(clicked=await s.page.evaluate("window.clicked || null"), moved=after["y"] - before["y"])
+        seen["mouse"], seen["middle"] = s.mouse, (after["x"] + after["width"] / 2, after["y"] + after["height"] / 2)
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["moved"] == pytest.approx(40, abs=0.5), "the banner came in while the pointer was on its way"
+    assert seen["clicked"] == "target"
+    assert seen["mouse"] == pytest.approx(seen["middle"], abs=0.5)
+
+
+def test_a_page_on_another_site_keeps_the_films_time_however_far_the_machines_clock_has_run_ahead(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    # #drifting moves 100 px a second, over and over.
+    where = "() => new DOMMatrix(getComputedStyle(document.querySelector('#drifting')).transform).m41"
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        # The machine's clock runs on while the film's stands still, as it does while a recording
+        # paints its frames; then the page goes to another site (localhost is not 127.0.0.1), which
+        # Chromium draws with a renderer of its own, its time started on the machine's clock.
+        time.sleep(3)
+        await s.page.goto(s.page.url.replace("127.0.0.1", "localhost"))
+        await s.page.wait_for_load_state("load")
+        await s.film.frames(10)
+        before, first = s.film.count, await s.page.evaluate(where)
+        await s.film.frames(15)
+        second, after = await s.page.evaluate(where), s.film.count
+        seen.update(moved=(second - first) % 100, frames=after - before)
+
+    _filmed(tmp_path, run, chromium)
+
+    # Moved as far as the frames take it, not held at its first keyframe until the frames catch up
+    # with the page's time three seconds later.
+    assert seen["moved"] == pytest.approx(seen["frames"] * 100 / 60, abs=2 * 100 / 60)
+
+
+def test_a_request_that_never_ends_costs_the_film_one_wait_rather_than_one_a_frame(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.page.goto(s.page.url + "hanging")
+        await s.page.wait_for_function("window.asked === true")
+        started = time.monotonic()
+        await s.film.frames(30)
+        seen.update(took=time.monotonic() - started, stuck=s.film.stuck())
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["stuck"], "the request was still open"
+    # One wait of STUCK for the frame that first held it, then frames at the film's own pace; one wait
+    # a frame would be a minute.
+    assert seen["took"] < film.STUCK + 4
+
+
+@pytest.mark.parametrize("seconds", [1.4, 4], ids=["waited out", "skipped"])
+def test_a_step_on_a_page_still_in_its_view_transition_waits_for_it_or_skips_it(
+    tmp_path: Path, chromium: str | None, seconds: float
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        home = s.page.url
+        # Now and then Chromium starts no transition for the change (``pagereveal`` hands the new page
+        # none), about one change in ten here; the change is made again then.
+        for _ in range(3):
+            await s.page.goto(f"{home}fade-{seconds}")
+            await s.click(s.page.locator("#go"))
+            await s.arrive(f"**/faded-{seconds}")
+            seen["in it"] = await s.page.evaluate("() => document.documentElement.matches(':active-view-transition')")
+            if seen["in it"]:
+                break
+        before = s.film.count
+        await s.click(s.page.locator("#hit"))
+        seen.update(hit=await s.page.evaluate("window.hits || 0"), frames=s.film.count - before)
+
+    _filmed(tmp_path, run, chromium)
+
+    assert seen["in it"], "the page arrived in its transition, which takes no clicks"
+    assert seen["hit"] == 1
+    if seconds == 4:
+        # Skipped once the step had waited TRANSITION_FRAMES for it, well short of its four seconds.
+        assert seen["frames"] < 4 * 60
+
+
+def test_a_cards_points_come_up_one_at_a_time_as_its_line_says_them(tmp_path: Path, chromium: str | None) -> None:
+    seen: dict[str, Any] = {}
+    points = ["Find it", "Check it", "Buy it"]
+
+    async def run(s: Studio) -> None:
+        # A line 1.2 s long; nothing plays it while the film rolls, so no file is needed.
+        s.lesson.narration["learn"] = {"text": "Find it, check it, and buy it."}
+        s.clips["learn"] = narrate.Clip(file=tmp_path / "learn.wav", seconds=1.2)
+        card, calls = s.card, []
+
+        async def counting(spec: Mapping[str, Any] | None, hold_ms: float = 0) -> None:
+            calls.append((s.clock(), len((spec or {}).get("points") or [])))
+            await card(spec, hold_ms)
+
+        s.card = counting  # type: ignore[method-assign]
+        start = s.clock()
+        await s.tell({"kicker": "In this lesson", "title": "Buying", "points": points}, "learn")
+        seen["calls"] = [(at - start, count) for at, count in calls]
+        seen["ended"] = s.clock() - start
+        seen["rows"] = await s.page.evaluate(POINTS)
+        s.card = card  # type: ignore[method-assign]
+        await s.card({"kicker": "Recap", "title": "Bought", "points": points[:2], "checks": True})
+        seen["ticked"] = await s.page.evaluate(POINTS)
+        await s.card({"kicker": "Next", "title": "No points"})
+        seen["none"] = await s.page.evaluate(POINTS)
+
+    _filmed(tmp_path, run, chromium)
+
+    # The first as the voice starts (its lead), then a third of the line apart, in the line's order.
+    assert [count for _at, count in seen["calls"]] == [1, 2, 3]
+    assert [at for at, _count in seen["calls"]] == pytest.approx([0.25, 0.65, 1.05], abs=1.5 / 60)
+    # Then the rest of the line and the breath after it: 0.25 + 1.2 + 0.45.
+    assert seen["ended"] == pytest.approx(1.9, abs=2 / 60)
+    assert seen["rows"] == [["1", "Find it"], ["2", "Check it"], ["3", "Buy it"]]
+    assert seen["ticked"] == [["✓", "Find it"], ["✓", "Check it"]], "a recap's points are ticked, and one fewer goes"
+    assert seen["none"] == []
 
 
 def test_the_page_keeps_the_films_time_a_frame_at_a_time(tmp_path: Path, chromium: str | None) -> None:

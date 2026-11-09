@@ -123,13 +123,14 @@ A lesson's steps call the studio, `s`:
 
 | Step | What it does |
 | --- | --- |
-| `s.card(spec, ms)`, `s.card(None)` | a title card over the page, with the product's mark; `None` lifts it |
+| `s.card(spec, ms)`, `s.card(None)` | a title card over the page, with the product's mark; `None` lifts it. `spec`'s `points` are a short list under the title, numbered, or ticked with `"checks": True` for a recap; `"mark": ""` draws it with no mark |
+| `s.tell(spec, key, ms, at)` | a card whose points come up one at a time while the line `key` is spoken over it: the first as the voice starts, each next at its share of the line in `at` (evenly, if none), so a line that names them in order shows each as it is said |
 | `s.chapter(title)` | the label on screen, and a chapter of the video from here on |
 | `s.say(key_or_text, ms)` | a caption, held as long as its voice, or long enough to read; a shorter `ms` lets the voice run on under the steps that follow |
 | `s.voice(key, ms)` | a line spoken with no caption on screen, as over a card; the captions file still has it |
 | `s.quiet()` | takes the caption down |
 | `s.spot(locator)`, `s.spot(None)` | dims the page around an element, once a scroll to it has stopped; the spotlight comes up where the element is, and one already up is taken down while the page scrolls there. With the lesson's `zoom`, or `zoom=` for this one, the camera moves in on it |
-| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, along a gently curved path that speeds up and slows down, a point a frame, once the page has stopped scrolling to it, and clicks, with a sound |
+| `s.glide(locator)`, `s.click(locator)` | moves the cursor there as a hand would, along a gently curved path that speeds up and slows down, a point a frame, once the page has stopped scrolling to it and once a view transition it is in is over, and clicks, with a sound, where the element is when the mouse goes down |
 | `s.arrive(url)` | waits for the page a step went to, loaded: `url` is its address, a glob such as `"**/checkout/done"`, a regular expression, or a function of the address |
 | `s.type(locator, text)` | types as a person does, a key every frame or more |
 | `s.paste(locator, text)` | puts text in at once, as a paste does, for words too long to watch being typed |
@@ -172,7 +173,11 @@ flicker open on the way.
 
 While a page fetches, its time waits for the answer, so a page loads in the video in the frames its
 scripts take, not the seconds its server does; a fetch that never ends (a stream, a long poll) is
-let run past after two seconds of waiting. A frame the same as the one before is not written again.
+let run past after two seconds of waiting. A page on another site (a payment provider's checkout,
+and the app it sends the buyer back to) gets a renderer of its own, whose clock Chromium starts at
+the machine's time, far ahead of a recording's frames; the film moves its frames' times on to a
+tenth of a second short of that page's, so its fades and menus run as they do anywhere else. A
+frame the same as the one before is not written again.
 Recording takes the headless shell, `chrome-headless-shell`, which `playwright install chromium`
 installs beside Chromium; `--chromium` names one already installed. A Chromium that is not one
 stops the recording with that said.

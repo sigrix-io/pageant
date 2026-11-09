@@ -8,6 +8,10 @@ described in `VERSIONING.md`.
 
 ### Added
 
+- A card's `points`: a short list under its title, numbered, or ticked for a recap (`"checks": True`),
+  and `Studio.tell`, which brings them up one at a time as a line read over the card names them, so a
+  lesson can open on what it covers and close on what it showed. A point added to a card on screen
+  fades up into place; the rest stay as they are.
 - The lesson engine, moved out of [Bailey](https://github.com/sigrix-io/bailey)'s `lessons/` with
   its tests: the studio that drives a product's page in Chromium and captures every frame, the
   filmed terminal, the voice (Kokoro, on the recording machine), the music made there, the mix,
@@ -67,6 +71,25 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A page on another site than the one before it (a payment provider's checkout, and the app it sends
+  the buyer back to) held its CSS animations at their first keyframe: a menu that fades in was open,
+  and took clicks, but never showed, and a title card never came up. Chromium draws such a page with a
+  renderer of its own, whose clock starts at the machine's time, which a recording's frames had fallen
+  tens of seconds behind; frames timed before a page's time leave its animations waiting for them. The
+  film reads where each renderer's clock began (`virtualTimeTicksBase`, in every answer to its
+  `setVirtualTimePolicy`) and moves the frames' times on to `BEHIND` (0.1 s) short of the page's time:
+  a frame level with it was never drawn on Stripe's Checkout page.
+- A step on a page still in its view transition (an app's CSS `@view-transition`) was swallowed: until
+  the transition ends, the page hit-tests as `<html>`. A step now waits for it, as a person does, and
+  skips one still running after `TRANSITION_FRAMES` (1.5 s), through the handle the page was
+  revealed with. A step's own waits for the page (Playwright's) take up to `WAIT_SECONDS` (180) of the
+  machine's time, not 30: the page moves only as frames are painted, which a busy machine paints slower.
+- A request a page keeps open (a stream, a long poll) cost the film `STUCK` seconds on every frame, so a
+  page change's view transition could take half a minute and a click land on a page still in it. The film
+  now watches its page's requests (CDP `Network`), and while one has been open longer than `STUCK`, the
+  page's time runs on without waiting for fetches, so it costs one wait.
+- A click pressed where its element was when the pointer set off, so one the page moved on the way (a
+  banner coming in above it) was missed. It is pressed where the element is when the mouse goes down.
 - A lesson that goes from page to page keeps what is on screen. The overlay starts afresh in each
   document a page loads, so after a click on a link, a form post or a server redirect, the next
   page had no chapter label and no caption, and drew the pointer at the middle of the screen until
