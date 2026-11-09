@@ -231,12 +231,12 @@ def test_a_short_gets_its_upload_written_sending_its_viewers_to_its_lesson(tmp_p
         f"TITLE\n{SHORT.page.title}\n\n"
         "DESCRIPTION\n"
         f"{SHORT.page.summary}\n\n"
-        f"The whole lesson, {FIRST.title}, on learn.example.com: https://learn.example.com/learn/{FIRST.slug}\n\n"
+        f"Watch the whole lesson, with its transcript, on learn.example.com: https://learn.example.com/learn/{FIRST.slug}\n\n"
         f"{PRODUCT.scripted}\n\n"
         "Notebook keeps your notes on one page.\n"
         "Get Notebook: https://example.com/notebook\n\n"
         "TAGS\nnotebook, notesapp, tutorial\n\n"
-        f"RELATED VIDEO\n{FIRST.title}: its video, once it is on YouTube\n"
+        f"RELATED VIDEO\n{FIRST.title} — choose it once it is on YouTube\n"
     )
     assert "RELATED VIDEO" not in written[0].read_text(encoding="utf-8"), "a lesson's upload has none"
 
@@ -253,7 +253,7 @@ def test_a_shorts_related_video_is_its_lessons_once_uploaded_and_its_link_its_ow
 
     text = (tmp_path / short.page.folder / youtube.UPLOAD).read_text(encoding="utf-8")
     assert f"on learn.example.com: {link}\n" in text
-    assert text.endswith(f"RELATED VIDEO\n{FIRST.title}: https://www.youtube.com/watch?v=abc123\n")
+    assert text.endswith(f"RELATED VIDEO\n{FIRST.title} — https://www.youtube.com/watch?v=abc123\n")
 
 
 def test_a_short_not_filmed_yet_or_from_no_lesson_of_the_path_is_named(tmp_path: Path) -> None:

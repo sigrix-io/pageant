@@ -161,14 +161,14 @@ def short_upload_for(short: Short, *, path: bundle.LearningPath, product: Produc
     lines = [
         short.page.summary,
         "",
-        f"The whole lesson, {lesson.title}, on {path.site.split('://', 1)[-1].rstrip('/')}: "
+        f"Watch the whole lesson, with its transcript, on {path.site.split('://', 1)[-1].rstrip('/')}: "
         f"{link or path.page_url(lesson)}",
         "",
     ]
     if product.scripted:
         lines += [product.scripted, ""]
     lines += [product.about, f"Get {product.name}: {product.link}"]
-    related = f"{lesson.title}: {lesson.youtube_url or 'its video, once it is on YouTube'}"
+    related = f"{lesson.title} — {lesson.youtube_url or 'choose it once it is on YouTube'}"
     return _held(
         short.page,
         Upload(title=short.page.title, description="\n".join(lines), tags=product.tags, related=related),
