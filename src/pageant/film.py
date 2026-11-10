@@ -52,6 +52,11 @@ FPS = 60
 FLAGS = ("--enable-begin-frame-control", "--deterministic-mode")
 #: Seconds the film waits for a fetch before it lets the page's time run past it.
 STUCK = 2.0
+#: How many times the film asks again, ``STUCK`` seconds apart, for the page's time to move on a frame
+#: when no answer says it has, before it paints the frame anyway (``Film._expired``).
+ASKS = 3
+#: Real seconds a frame's painting may take before the film stops with that said, rather than wait for ever.
+PAINT_SECONDS = 60.0
 #: Seconds behind the page's time a frame is timed, at least, when the frames catch up with it
 #: (``Film._next_time``). In a browser a frame always began a little before the page's now, and the
 #: film holds the page's clock still until a frame is drawn: timed level with it, a frame on Stripe's
@@ -111,6 +116,11 @@ class Film:
     hooked: int = 0
     #: Whether painted frames are kept.
     rolling: bool = False
+    #: Whether the video leaves out the frames painted now, as an edit cuts a wait (``Studio.cut``): the
+    #: page's time runs on, and the film's clock, which is the video's, does not.
+    cutting: bool = False
+    #: How many frames were painted while cutting: the frames the video goes without.
+    skipped: int = 0
     #: What the next frame shows: the whole screen (``None``), or a rectangle of the page, in its own
     #: (document) CSS pixels, painted to fill the frame.
     clip: dict[str, float] | None = None
@@ -138,7 +148,9 @@ class Film:
     _caught_up: float = field(default=0.0, init=False, repr=False)
 
     def clock(self) -> float:
-        return self.count / FPS
+        """Seconds of the video's frames painted so far: the frames left out by a cut are not counted."""
+
+        return (self.count - self.skipped) / FPS
 
     async def start(self) -> None:
         """Hold the page's time, and start painting a frame for each frame's worth of it."""
@@ -228,15 +240,31 @@ class Film:
         budget = 1000 / FPS
         if self.stuck():
             await self._policy("advance", budget)
-            await expired
+            await self._expired(expired, budget)
         else:
             await self._policy("pauseIfNetworkFetchesPending", budget)
             try:
                 await asyncio.wait_for(asyncio.shield(expired), STUCK)
             except TimeoutError:
                 await self._policy("advance", budget)
-                await expired
+                await self._expired(expired, budget)
         self._moved += budget
+
+    async def _expired(self, expired: asyncio.Future[None], budget: float) -> None:
+        """Wait for the page's time to have moved on, asking again every ``STUCK`` seconds it has not.
+
+        The answer can be lost: a page that goes to another while its time moves on can take with it
+        the renderer that would have given it, and the one that replaced it was asked for nothing. A
+        frame asked for ``ASKS`` times with no answer is painted anyway, rather than the film waiting
+        for ever.
+        """
+
+        for _ in range(ASKS):
+            try:
+                await asyncio.wait_for(asyncio.shield(expired), STUCK)
+                return
+            except TimeoutError:
+                await self._policy("advance", budget)
 
     async def _policy(self, policy: str, budget: float) -> None:
         self._renderer(await self.cdp.send("Emulation.setVirtualTimePolicy", {"policy": policy, "budget": budget}))
@@ -335,7 +363,9 @@ class Film:
         elif painted.get("screenshotData"):
             self._latest = base64.b64decode(painted["screenshotData"])
         self.count += 1
-        if shooting and self.rolling:
+        if self.cutting:
+            self.skipped += 1
+        elif shooting and self.rolling:
             self._keep(clipped if clipped is not None else self._latest)
         tick, self._tick = self._tick, asyncio.Event()
         tick.set()
@@ -361,7 +391,12 @@ class Film:
 
     async def _begin(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
-            return await self.cdp.send("HeadlessExperimental.beginFrame", params)
+            return await asyncio.wait_for(self.cdp.send("HeadlessExperimental.beginFrame", params), PAINT_SECONDS)
+        except TimeoutError:
+            raise RuntimeError(
+                f"Chromium painted no frame in {PAINT_SECONDS:g} s of asking (frame {self.count + 1}): the browser "
+                "has stopped drawing the page."
+            ) from None
         except Exception as error:
             if "wasn't found" in str(error):
                 raise NoBeginFrame(
@@ -412,6 +447,8 @@ __all__ = [
     "QUALITY",
     "SPARE",
     "STUCK",
+    "ASKS",
+    "PAINT_SECONDS",
     "Film",
     "NoBeginFrame",
     "Shot",

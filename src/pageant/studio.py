@@ -2,14 +2,15 @@
 
 A lesson is a storyboard: a table of what it says, and its steps, each a highlight, a click or a
 caption. The studio starts the lesson's app (``apps.py``), opens it in Chromium's headless shell at
-1280x720 CSS pixels and a device scale of 1.5, so frames are 1920x1080 and text is sharp, draws the
+1280x720 CSS pixels and a device scale of 1.5, so frames are 1920x1080 and text is sharp, or on a
+phone's screen held upright, 360x640 at 3 for 1080x1920 frames (``Lesson.screen``), draws the
 cursor, spotlight, captions and cards over the page (``overlay.js``), and paints every frame of the
 video itself, 60 a second, on a clock it keeps (``film.py``): every motion in it, the pointer's, a
 scroll's, a fade's, is as even on a slow machine as on a fast one. A lesson that lets it zooms
 in on what each spotlight shows (``Lesson.zoom``, ``camera.py``). It writes a folder of the
 lesson's own in the output folder, named by its page, which is the lesson's bundle (``bundle.py``):
 
-- ``video.mp4``: H.264 and AAC at 1080p and 60 fps, with its chapters as markers;
+- ``video.mp4``: H.264 and AAC at 1080p (1080x1920 on a phone's screen) and 60 fps, with its chapters as markers;
 - ``cover.jpg``: the poster, which is the title card;
 - ``captions.vtt``: the captions, every line spoken;
 - ``chapters.vtt`` and ``chapters.txt``: the chapters, for a web page's player and for a
@@ -50,13 +51,14 @@ from typing import Any, Literal
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import FloatRect, Frame, Locator, Page, async_playwright
 
-from pageant import apps, bundle, camera, loudness, mixdown, narrate, timeline
+from pageant import apps, bundle, camera, loudness, mixdown, narrate, report, timeline
 from pageant.apps import App, Running
-from pageant.camera import HEIGHT, WHOLE, WIDTH, View
-from pageant.film import CROP, FLAGS, FPS, Film, concat
+from pageant.camera import LANDSCAPE, WHOLE, Screen, View
+from pageant.film import FLAGS, FPS, Film, concat
 
 HERE = Path(__file__).resolve().parent
-SCALE = 1.5
+#: The frame a lesson chose for its thumbnail (``Studio.thumbnail``), in the work folder.
+THUMBNAIL_SHOT = "thumbnail-shot.jpg"
 #: A voice starts a moment after its caption fades in, and the next line waits a breath after it.
 VOICE_LEAD = 0.25
 VOICE_GAP = 0.45
@@ -75,8 +77,8 @@ SPOT_FADE = 0.35
 #: How long, in real seconds, a frame waits for the page to draw the pointer and the camera before it
 #: is painted without them.
 HOOK_WAIT = 1.0
-#: The foot of the screen a caption of two lines covers, in CSS pixels.
-CAPTION_BAND = 125
+#: The foot of the landscape screen a caption of two lines covers, in CSS pixels (``Screen.band``).
+CAPTION_BAND = LANDSCAPE.band
 #: How far, in CSS pixels, an element may have moved by the time the mouse goes down before the
 #: pointer goes after it (``Studio.click``).
 AIM = 3.0
@@ -89,19 +91,19 @@ TRANSITION_FRAMES = 90
 WAIT_SECONDS = 180
 #: Whether an element is in view already, so a step that points at it does not scroll there: all of
 #: it on screen, and either in a bar that stays put as the page scrolls (fixed, or sticky, which
-#: Chromium scrolls the page under rather than bring it nearer) or above the captions with nothing
-#: over its middle, such as a sticky top bar.
-IN_VIEW = f"""el => {{
+#: Chromium scrolls the page under rather than bring it nearer) or above the captions (the screen's
+#: ``band``, its argument) with nothing over its middle, such as a sticky top bar.
+IN_VIEW = """(el, band) => {
   const r = el.getBoundingClientRect();
-  if (!r.width || !r.height || r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) {{
+  if (!r.width || !r.height || r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) {
     return false;
-  }}
-  for (let at = el; at; at = at.parentElement) {{
+  }
+  for (let at = el; at; at = at.parentElement) {
     if (["fixed", "sticky"].includes(getComputedStyle(at).position)) return true;
-  }}
+  }
   const over = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-  return r.bottom <= innerHeight - {CAPTION_BAND} && !!over && el.contains(over);
-}}"""
+  return r.bottom <= innerHeight - band && !!over && el.contains(over);
+}"""
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,27 @@ class Lesson:
     loudness: float = loudness.WEB
     #: How far the camera may zoom in on what a spotlight shows: 1, the default, never zooms; 2 shows
     #: it up to twice as large (``camera.py``). The captions, the label and the cards keep their size.
+    #: Only on the landscape screen: on a phone's, the page is laid out for the phone already.
     zoom: float = 1.0
+    #: The YouTube thumbnail's words: a short ``title`` (a ``*starred*`` part in the accent colour), and
+    #: optionally a ``kicker`` above it (the title card's, unless given) and a ``brand`` beside the
+    #: ``mark``. Its picture is the frame the lesson chose with ``Studio.thumbnail``; the YouTube cut
+    #: (``record(youtube=True)``) composes it, as ``thumbnail.jpg``. Only on the landscape screen.
+    thumbnail: Mapping[str, str] | None = None
+    #: The screen the lesson is filmed on (``camera.py``): a computer's, ``LANDSCAPE``, unless it says;
+    #: or a phone's held upright, ``camera.PHONE``, for a vertical video, where the page is laid out for
+    #: a phone and the overlay too, and the captions stay in the picture, as such a video is watched.
+    screen: Screen = LANDSCAPE
+
+    def __post_init__(self) -> None:
+        if self.screen != LANDSCAPE:
+            if self.zoom > 1:
+                raise ValueError(
+                    "The camera zooms on the landscape screen only: a lesson on another screen keeps zoom at 1, "
+                    "its page laid out for that screen already."
+                )
+            if self.thumbnail is not None:
+                raise ValueError("A YouTube thumbnail is composed for a lesson on the landscape screen only.")
 
     @property
     def slug(self) -> str:
@@ -185,6 +207,8 @@ class _Caption:
     start: float
     text: str
     end: float | None = None
+    #: How long its voice took with the lead before it and the breath after; 0 for a line not spoken.
+    spoken: float = 0.0
 
 
 def _middle(box: FloatRect | None) -> tuple[float, float] | None:
@@ -216,10 +240,13 @@ class Studio:
     captions: list[_Caption] = field(default_factory=list)
     spoken_only: list[timeline.Cue] = field(default_factory=list)
     spoken: list[tuple[float, Path]] = field(default_factory=list)
+    #: When the voice spoke each line: its start and its end, in seconds of the video.
+    voiced: list[tuple[float, float]] = field(default_factory=list)
     clicks: list[float] = field(default_factory=list)
     marks: list[timeline.Mark] = field(default_factory=list)
     voice_until: float = 0.0
-    mouse: tuple[float, float] = (WIDTH / 2, HEIGHT / 2)
+    #: Where the pointer is: the middle of the screen until a step moves it.
+    mouse: tuple[float, float] = field(init=False)
     #: The terminal page's address, and what a command typed there runs with.
     terminal_url: str = ""
     shell_env: Mapping[str, str] = field(default_factory=dict)
@@ -230,6 +257,9 @@ class Studio:
     #: A rehearsal (``rehearse``): nothing is spoken or filmed, and no wait is longer than
     #: ``REHEARSAL_WAIT``.
     rehearsal: bool = False
+    #: Whether a caption is drawn into the picture. The YouTube cut draws none: YouTube shows the
+    #: lesson's ``captions.vtt`` itself, which the studio writes either way.
+    captions_drawn: bool = True
     _caption: str | None = field(default=None, init=False, repr=False)
     _card: Mapping[str, Any] | None = field(default=None, init=False, repr=False)
     #: Takes away the script that hands what is on screen to the next document (``_carry``).
@@ -248,6 +278,8 @@ class Studio:
     _drawn_for: View | None = field(default=WHOLE, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        screen = self.lesson.screen
+        self.mouse = (screen.width / 2, screen.height / 2)
         self.page.on("framenavigated", self._went)
 
     def clock(self) -> float:
@@ -337,7 +369,7 @@ class Studio:
         return {
             "label": self.label,
             "corner": self.lesson.label_corner,
-            "caption": self._caption,
+            "caption": self._caption if self.captions_drawn else None,
             "card": card,
             "at": list(self.mouse),
         }
@@ -495,6 +527,7 @@ class Studio:
 
         self.spoken.append((self.clock() + VOICE_LEAD, clip.file))
         self.voice_until = self.clock() + VOICE_LEAD + clip.seconds
+        self.voiced.append((self.clock() + VOICE_LEAD, self.voice_until))
         return VOICE_LEAD + clip.seconds + VOICE_GAP
 
     def _close_caption(self) -> None:
@@ -515,10 +548,13 @@ class Studio:
         if clip:
             await self._voice_free()
         self._close_caption()
-        self.captions.append(_Caption(self.clock(), text))
+        caption = _Caption(self.clock(), text)
+        self.captions.append(caption)
         self._caption = text
         await self._show()
         natural = self._speak(clip) if clip else max(2.4, len(text) * 0.06)
+        if clip:
+            caption.spoken = natural
         await self._wait(natural if hold_ms is None else hold_ms / 1000)
 
     async def voice(self, key: str, extra_ms: float = 0) -> None:
@@ -549,15 +585,16 @@ class Studio:
         in a sticky top bar would scroll the page under the bar.
         """
 
-        if not await locator.evaluate(IN_VIEW):
+        if not await locator.evaluate(IN_VIEW, self.lesson.screen.band):
             await locator.evaluate("el => el.scrollIntoView({ block: 'center', behavior: 'smooth' })")
-        until = self.film.clock() + SETTLE_CAP
+        # The page's time, which a cut leaves running: frames painted, not the video's seconds.
+        until = self.film.count + round(SETTLE_CAP * FPS)
         await self.sleep(pause_ms - SETTLE_POLL * 1000)
         box = await locator.bounding_box()
         while True:
             await self.film.seconds(SETTLE_POLL)
             then, box = box, await locator.bounding_box()
-            if _held(then, box) or self.film.clock() >= until:
+            if _held(then, box) or self.film.count >= until:
                 return box
 
     async def spot(self, locator: Locator | None, padding: float = 8, zoom: float | None = None) -> None:
@@ -567,14 +604,16 @@ class Studio:
         of view, rather than trailing its element off the screen and sliding across to the new one;
         the new one comes up where it lands. With ``Lesson.zoom``, or ``zoom`` for this one, the
         camera moves in on it (``camera.framing``), and it moves back out when the spotlight lifts
-        or the page has to scroll to the next.
+        or the page has to scroll to the next: on the landscape screen, the only one it zooms on.
         """
 
+        if zoom is not None and zoom > 1 and self.lesson.screen != LANDSCAPE:
+            raise ValueError("The camera zooms on the landscape screen only: spot() takes no zoom on this one.")
         if locator is None:
             await self._on_page("() => window.__demo.spot(null)")
             await self._look(WHOLE)
             return
-        if not await locator.evaluate(IN_VIEW):
+        if not await locator.evaluate(IN_VIEW, self.lesson.screen.band):
             await self._look(WHOLE, wait=True)
             if await self.page.evaluate("() => window.__demo.spot(null)"):
                 await self.sleep(SPOT_FADE * 1000)
@@ -583,7 +622,7 @@ class Studio:
         most = self.lesson.zoom if zoom is None else zoom
         if box is not None and most > 1:
             framed = (box["x"] - padding, box["y"] - padding, box["width"] + 2 * padding, box["height"] + 2 * padding)
-            await self._look(camera.framing(framed, most, band=CAPTION_BAND))
+            await self._look(camera.framing(framed, most, band=self.lesson.screen.band))
         await self.sleep(450)
 
     async def _transitioned(self) -> None:
@@ -601,7 +640,7 @@ class Studio:
         page has stopped scrolling to it, and once a view transition the page is in is over."""
 
         await self._transitioned()
-        if not await locator.evaluate(IN_VIEW):
+        if not await locator.evaluate(IN_VIEW, self.lesson.screen.band):
             # The page is about to scroll under the camera: back out to the whole screen first.
             await self._look(WHOLE, wait=True)
         box = await self._scroll_to(locator, 450)
@@ -668,6 +707,36 @@ class Studio:
 
         await self.page.wait_for_url(url)
         await self._show()
+
+    @contextlib.asynccontextmanager
+    async def cut(self) -> AsyncIterator[None]:
+        """Leave out of the video what the steps inside take, as an edit cuts a wait: a payment
+        processing, a page that takes its time.
+
+        The page's time runs on, and the video goes from the frame before to the frame after, its
+        captions, voice and clicks where they were. A line said inside goes on under the frame after;
+        hold none there.
+        """
+
+        self.film.cutting = True
+        try:
+            yield
+        finally:
+            self.film.cutting = False
+
+    async def thumbnail(self) -> None:
+        """Choose the frame on screen now as the YouTube thumbnail's picture (``Lesson.thumbnail``).
+
+        Only the YouTube cut takes it, as its frames hold no caption; a rehearsal and the lesson's own
+        recording take none. Where the camera has moved in on a spotlight, the picture is that view.
+        """
+
+        if self.rehearsal or self.captions_drawn or not self.film.rolling:
+            return
+        # The frame after this one shows what the step before drew.
+        await self.film.frames(2)
+        if self.film.last_file is not None:
+            shutil.copyfile(self.film.last_file, self.work / THUMBNAIL_SHOT)
 
     async def terminal(self, title: str = "Terminal", where: str = "~") -> None:
         """Leave the app's page for the terminal, where shell() runs commands, and put the pointer away."""
@@ -738,6 +807,30 @@ class Studio:
         await self.sleep(300)
 
 
+async def _set_screen(film: Film, screen: Screen) -> None:
+    """Give the page ``screen``: its size in CSS pixels, at the browser's own scale.
+
+    The headless shell opens every page in a window of the same size, whatever ``--window-size``
+    says, so the page's screen is set on the page itself. ``deviceScaleFactor`` 0 keeps the scale
+    the browser paints at, which an emulated one would not: frames would be painted at CSS pixels.
+    A page is laid out for the screen's width, as a phone's narrow screen lays out one written for
+    it. It is not a phone in Chromium's device mode, where a page wider than the screen widens the
+    viewport the overlay is drawn in and takes the captions off the screen.
+    """
+
+    await film.cdp.send(
+        "Emulation.setDeviceMetricsOverride",
+        {
+            "width": screen.width,
+            "height": screen.height,
+            "deviceScaleFactor": 0,
+            "mobile": False,
+            "screenWidth": screen.width,
+            "screenHeight": screen.height,
+        },
+    )
+
+
 @contextlib.asynccontextmanager
 async def _staged(
     lesson: Lesson,
@@ -748,6 +841,7 @@ async def _staged(
     *,
     frames: Path | None = None,
     rehearsal: bool = False,
+    captions_drawn: bool = True,
 ) -> AsyncIterator[Studio]:
     """The lesson's app started, its page open in Chromium's headless shell under the overlay, the
     film painting its frames (into ``frames`` once it rolls, if given), the lesson's setup run on it,
@@ -759,7 +853,8 @@ async def _staged(
 
     failure = out / "failure.png"
     failure.unlink(missing_ok=True)
-    served = {"/": HERE / "terminal.html"}
+    screen = lesson.screen
+    served = {"/": HERE / "terminal.html", "/thumbnail": HERE / "thumbnail.html", "/shot.jpg": work / THUMBNAIL_SHOT}
     if lesson.mark is not None and lesson.mark.url.startswith("/"):
         served[lesson.mark.url] = lesson.mark.file
     running: Running = lesson.app.start(work, apps.environment(work, lesson.commands))
@@ -770,8 +865,7 @@ async def _staged(
             # The scale is the browser's own, not an emulated one: only then are frames painted at
             # device pixels (1920x1080) rather than CSS pixels (1280x720).
             browser = await playwright.chromium.launch(
-                executable_path=chromium,
-                args=[*FLAGS, f"--force-device-scale-factor={SCALE}", f"--window-size={WIDTH},{HEIGHT}"],
+                executable_path=chromium, args=[*FLAGS, f"--force-device-scale-factor={screen.scale:g}"]
             )
             context = await browser.new_context(viewport=None, color_scheme=lesson.color_scheme)
             await context.add_init_script(path=HERE / "overlay.js")
@@ -779,7 +873,8 @@ async def _staged(
             page.set_default_timeout(WAIT_SECONDS * 1000)
             # The film paints from before the first page loads: a page loads only as frames are painted.
             film = Film(await context.new_cdp_session(page), frames)
-            studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal)
+            await _set_screen(film, screen)
+            studio = Studio(page, lesson, clips, work, film, rehearsal=rehearsal, captions_drawn=captions_drawn)
             film.before = studio._frame
             studio.terminal_url = f"http://127.0.0.1:{files.server_address[1]}/"
             studio.shell_env = {**running.env, "PYTHONUNBUFFERED": "1", "TERM": "xterm-256color"}
@@ -822,14 +917,16 @@ async def _staged(
         running.stop()
 
 
-async def _capture(lesson: Lesson, out: Path, work: Path, chromium: str | None) -> tuple[Studio, float]:
+async def _capture(
+    lesson: Lesson, out: Path, work: Path, chromium: str | None, *, captions_drawn: bool = True
+) -> tuple[Studio, float]:
     """Record the lesson's frames into its work folder, and its poster into its folder ``out``; the
     studio's log of it, and how long the video is, in seconds."""
 
     clips = narrate.speak(lesson.narration, narrate.Voice(lesson.voice), lesson.pronounce) if lesson.narration else {}
     frames = work / "frames"
     frames.mkdir()
-    async with _staged(lesson, out, work, chromium, clips, frames=frames) as studio:
+    async with _staged(lesson, out, work, chromium, clips, frames=frames, captions_drawn=captions_drawn) as studio:
         film = studio.film
         await studio.page.mouse.move(*studio.mouse)
         await studio.card(lesson.title, 700)
@@ -845,16 +942,70 @@ async def _capture(lesson: Lesson, out: Path, work: Path, chromium: str | None) 
         await film.seconds(max(0.4, studio.voice_until - studio.clock() + 0.4))
         film.rolling = False
         stopped = studio.clock()
+        if lesson.thumbnail is not None and (work / THUMBNAIL_SHOT).is_file():
+            await _thumbnail(studio, out)
     return studio, stopped
 
 
-async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False) -> dict[str, Any]:
-    """Record ``lesson`` into a folder of its own in ``out``, its bundle, and say what was made."""
+async def _thumbnail(studio: Studio, folder: Path) -> None:
+    """Compose the lesson's YouTube thumbnail on Pageant's own page and keep it as ``thumbnail.jpg``.
 
-    folder = out / lesson.slug
+    The film has stopped rolling, so nothing here reaches the video. What is on screen is cleared
+    first: the end card and the pointer would otherwise be drawn again over the thumbnail's page.
+    """
+
+    lesson = studio.lesson
+    words = dict(lesson.thumbnail or {})
+    if not words.get("title"):
+        raise ValueError("A lesson's thumbnail needs a title: Lesson(thumbnail={'title': ...}).")
+    studio.label, studio._caption, studio._card = None, None, None
+    studio._cut(WHOLE)
+    await studio.film.frames(1)
+    await studio.page.goto(studio.terminal_url + "thumbnail")
+    await studio.page.wait_for_function("() => typeof window.thumbnail === 'function' && window.__demo")
+    await studio.page.evaluate("() => window.__demo.pointer(false)")
+    await studio.page.evaluate(
+        "(words) => window.thumbnail(words)",
+        {
+            "title": words["title"],
+            "kicker": words.get("kicker", lesson.title.get("kicker", "")),
+            "brand": words.get("brand", ""),
+            "mark": lesson.mark.url if lesson.mark is not None else "",
+            "shot": "/shot.jpg",
+        },
+    )
+    picture = await studio.film.picture()
+    if picture is None:
+        raise RuntimeError("Chromium painted no picture of the thumbnail.")
+    drawn = studio.work / "thumbnail.png"
+    drawn.write_bytes(picture)
+    mixdown.ffmpeg("-i", str(drawn), "-q:v", "2", str(folder / bundle.THUMBNAIL))
+
+
+async def record(
+    lesson: Lesson, out: Path, *, chromium: str | None = None, keep_work: bool = False, youtube: bool = False
+) -> dict[str, Any]:
+    """Record ``lesson`` into a folder of its own in ``out``, its bundle, and say what was made.
+
+    ``youtube`` records its YouTube cut instead, into ``out/youtube/<folder>/``
+    (``bundle.YOUTUBE_CUT``): the same lesson with no caption drawn into the picture, since YouTube
+    shows the ``captions.vtt`` written beside it, which a viewer can turn off or have translated. The
+    lesson's own recording, whose captions are part of the picture, is what a learning site plays.
+    A lesson on a phone's screen has no YouTube cut: a vertical video is watched with its captions
+    in the picture.
+    """
+
+    if youtube and lesson.screen.upright:
+        raise ValueError(
+            "A lesson on a phone's screen keeps its captions in the picture, as a vertical video is watched: "
+            "its own recording is the one to upload."
+        )
+    folder = out / bundle.YOUTUBE_CUT / lesson.slug if youtube else out / lesson.slug
     folder.mkdir(parents=True, exist_ok=True)
+    # A thumbnail an earlier take left there is not this one's.
+    (folder / bundle.THUMBNAIL).unlink(missing_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f"{lesson.slug}-", dir=out))
-    studio, stopped = await _capture(lesson, folder, work, chromium)
+    studio, stopped = await _capture(lesson, folder, work, chromium, captions_drawn=not youtube)
     shots = studio.film.shots
     if not shots:
         raise RuntimeError("The film kept no frames, so there is nothing to encode.")
@@ -865,10 +1016,11 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
     (work / "frames.txt").write_text(concat(shots), encoding="utf-8")
     mp4 = folder / bundle.VIDEO
     picture = work / "picture.mp4" if lesson.narration else mp4
+    width, height = lesson.screen.frame
     mixdown.ffmpeg(
         *("-f", "concat", "-safe", "0", "-i", str(work / "frames.txt")),
         # A zoomed frame is taken a few pixels larger than the frame (``film.SPARE``): its top-left is the frame.
-        *("-vf", CROP, "-fps_mode", "cfr", "-r", str(FPS)),
+        *("-vf", f"crop={width}:{height}:0:0", "-fps_mode", "cfr", "-r", str(FPS)),
         *("-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart"),
         str(picture),
     )
@@ -895,6 +1047,22 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
             *("-c", "copy", *language, "-movflags", "+faststart", str(marked)),
         )
         marked.replace(mp4)
+    lines = [
+        report.Line(caption.start, stopped if caption.end is None else caption.end, caption.text, caption.spoken)
+        for caption in studio.captions
+    ]
+    quality = report.build(
+        seconds=seconds,
+        fps=FPS,
+        size=(width, height),
+        lines=lines,
+        voiced=studio.voiced,
+        runs=[shot.frames for shot in shots],
+        chapters=[(part.start, part.text) for part in parts],
+        loudness=report.measure_loudness(mp4) if lesson.narration else None,
+        target=lesson.loudness if lesson.narration else None,
+    )
+    report.write(folder, quality, f"{lesson.title['kicker']}: {lesson.title['title']}")
     bundle.write_page(lesson.page, folder)
     if not keep_work:
         shutil.rmtree(work)
@@ -907,6 +1075,9 @@ async def record(lesson: Lesson, out: Path, *, chromium: str | None = None, keep
         "spoken": len(studio.spoken),
         "clicks": len(studio.clicks),
         "chapters": [f"{timeline.clock_time(part.start)} {part.text}" for part in parts],
+        "report": str(folder / report.MARKDOWN),
+        **({"thumbnail": str(folder / bundle.THUMBNAIL)} if (folder / bundle.THUMBNAIL).is_file() else {}),
+        "to look at": quality["findings"],
     }
 
 

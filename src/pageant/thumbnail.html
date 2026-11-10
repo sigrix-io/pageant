@@ -1,0 +1,97 @@
+<!doctype html>
+<!--
+  A lesson's YouTube thumbnail (studio.py's _thumbnail): its words, its product's mark and a frame of
+  the lesson, composed on a page of Pageant's own once the film has stopped rolling, and kept as the
+  YouTube cut's thumbnail.jpg. A thumbnail is seen small, beside others, so its words are few and
+  large and its picture is the moment the lesson chose (Studio.thumbnail), zoomed where the camera was.
+  The words are set in Inter, which the page asks Google Fonts for: a lesson that routes its fonts
+  serves them, and a system face stands in where nothing answers.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Thumbnail</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800&display=block">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body {
+      position: relative;
+      background: radial-gradient(1100px 760px at 28% 42%, #272d4c, #0d0f17 72%);
+      color: #fff;
+      font-family: Inter, system-ui, sans-serif;
+    }
+    .shot {
+      position: absolute;
+      right: -48px;
+      top: 50%;
+      width: 760px;
+      border-radius: 18px;
+      transform: translateY(-50%) rotate(-2.5deg);
+      box-shadow: 0 34px 90px rgba(0, 0, 0, 0.66), 0 0 0 2px rgba(255, 255, 255, 0.09);
+    }
+    .shot:not([src]) { display: none; }
+    .words {
+      position: absolute;
+      z-index: 1;
+      left: 64px;
+      top: 0;
+      bottom: 0;
+      width: 520px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 16px; font: 700 30px/1 Inter, system-ui, sans-serif; }
+    .brand img { width: 60px; height: 60px; border-radius: 15px; }
+    .brand img:not([src]), .brand:empty, .kicker:empty { display: none; }
+    .kicker {
+      font: 700 21px/1.2 Inter, system-ui, sans-serif;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #f7c55f;
+    }
+    .title {
+      font: 800 76px/1.02 Inter, system-ui, sans-serif;
+      letter-spacing: -0.035em;
+      text-wrap: balance;
+    }
+    .title em { font-style: normal; color: #f7c55f; }
+  </style>
+</head>
+<body>
+  <img class="shot" alt="">
+  <div class="words">
+    <div class="brand"></div>
+    <div class="kicker"></div>
+    <div class="title"></div>
+  </div>
+  <script>
+    // Fill the thumbnail in and answer once its faces and pictures are ready to paint. A *starred*
+    // part of the title is drawn in the accent colour.
+    window.thumbnail = async ({ title, kicker = "", brand = "", mark = "", shot = "" }) => {
+      const heading = document.querySelector(".title");
+      title.split("*").forEach((part, index) => {
+        if (!part) return;
+        const piece = index % 2 ? document.createElement("em") : document.createTextNode(part);
+        if (index % 2) piece.textContent = part;
+        heading.append(piece);
+      });
+      document.querySelector(".kicker").textContent = kicker;
+      const named = document.querySelector(".brand");
+      if (mark) {
+        const logo = document.createElement("img");
+        logo.alt = "";
+        logo.src = mark;
+        named.append(logo);
+      }
+      if (brand) named.append(document.createTextNode(brand));
+      if (shot) document.querySelector(".shot").src = shot;
+      await document.fonts.ready;
+      await Promise.all([...document.images].filter((image) => image.src).map((image) => image.decode().catch(() => {})));
+      return true;
+    };
+  </script>
+</body>
+</html>

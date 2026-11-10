@@ -137,6 +137,8 @@ A lesson's steps call the studio, `s`:
 | `s.terminal(title, where)` | leaves the page for a terminal |
 | `s.shell(command)` | types a command at the terminal's prompt, runs it for real, and shows what it prints as it prints it |
 | `s.sleep(ms)` | waits |
+| `async with s.cut():` | leaves out of the video what the steps inside take, as an edit cuts a wait (a payment processing, a slow page): the page's time runs on, and the video goes from the frame before to the frame after, its captions, voice and clicks where they were |
+| `s.thumbnail()` | chooses the frame on screen as the YouTube thumbnail's picture (below) |
 | `s.page` | the Playwright page itself, for anything else |
 
 A step that goes to another page (a link, a form post, a server redirect such as a checkout's)
@@ -197,6 +199,23 @@ The video's chapters follow YouTube's rules, since a video that breaks them show
 starts at 0:00 whenever the lesson marked it, and a chapter shorter than ten seconds runs on into
 the one before it.
 
+### A phone's screen
+
+```python
+from pageant.camera import PHONE
+
+LESSON = Lesson(..., screen=PHONE)
+```
+
+films the lesson on a phone's screen held upright, 360×640 CSS pixels painted at 3, for a vertical
+video of 1080×1920: YouTube Shorts and the like. The page is laid out for the screen's width, as a
+phone lays out one written for it, and so is the overlay: the caption sits above the foot of the
+screen that a vertical video's player covers with its own titles, everything is sized for a phone,
+and the pointer is a fingertip that presses in on a tap. A step keeps what it points at above the
+captions, which sit higher than a computer's. The page fills the frame at a phone's own size, so the
+camera does not move: a lesson on a phone's screen takes no `zoom`, no thumbnail and no YouTube cut,
+and keeps its captions in the picture, where a vertical video's viewers read them.
+
 ### Rehearsing
 
 ```bash
@@ -209,6 +228,28 @@ caption is held, a pause the lesson asks for, a pause after a click. A scroll is
 until it stops. A step the app no longer has stops it as it stops a recording, with the page kept
 as `failure.png` in the lesson's folder, and nothing else is written there. It takes the `record`
 extra, but not ffmpeg, and runs in a fraction of a recording's time.
+
+### The report
+
+Each recording writes `report.md` and `report.json` beside its video (`pageant.report`), and
+`pageant record` prints what they found worth a look. They are read off the recording's own log,
+so a caption's time on screen is measured against the clip its voice spoke, and the motion against
+the frames the film kept:
+
+- the mix's loudness against the lesson's target, and its true peak;
+- a caption still up four seconds after its voice and breath have ended, which a viewer sits
+  through as dead air;
+- the longest stretch with nothing said, and the longest with no frame changing, between the first
+  line and the end of the last (a title or end card held still is neither);
+- how many distinct frames the busiest second of motion has, of 60;
+- the seconds after the last line, which YouTube's end screen takes (5 to 20);
+- the chapters, held to what YouTube makes chapters of.
+
+A vertical video is a Short on YouTube if it is three minutes or less, and a Short has no end screen
+and no chapters and plays again from the start: its report says so if it runs longer, or more than
+three seconds after its last line.
+
+A finding is something to look at: the video is written whatever the report says.
 
 ## Starting the product: the start hook
 
@@ -274,11 +315,27 @@ filmed, and `pageant pack` before anything is zipped, with every reason at once.
 ### YouTube
 
 ```bash
+pageant record notebook/lesson.py --youtube
+```
+
+records the lesson's YouTube cut into `out/youtube/<folder>/`: the same lesson with no captions
+drawn into the picture, since YouTube shows `captions.vtt` itself, under the viewer's control and in
+the languages it translates to. The lesson's own recording, whose captions are part of the picture,
+is the one a learning site plays and a pack carries.
+
+The cut also makes the video's thumbnail, `thumbnail.jpg`, where the lesson says what it reads
+(`Lesson(thumbnail={"title": "Find *a note* fast"})`, a starred part in the accent colour, with an
+optional `kicker` and `brand`) and chooses its picture: `await s.thumbnail()` keeps the frame on
+screen at that step, zoomed where the camera has moved in. It is composed in Inter beside the
+product's mark, at 1920×1080 and under YouTube's 2 MB.
+
+```bash
 pageant youtube-text notebook/pages.py --link notebook-lesson-1-your-first-note=https://example.com/go/abc
 ```
 
-writes `youtube.txt` into each recorded lesson's folder: its title, description and tags, to paste
-into YouTube Studio beside the folder's `video.mp4`, `cover.jpg` (the thumbnail) and
+writes `youtube.txt` into the folder of each recorded lesson's YouTube cut, or of the lesson's own
+recording where it has no cut: its title, description and tags, to paste into YouTube Studio
+beside that folder's `video.mp4`, `thumbnail.jpg` (or `cover.jpg`, the title card) and
 `captions.vtt`. The description is the lesson's summary, a link to its page (or the tracked link
 `--link` gives), its chapters, what in it is scripted, where it sits in its path, and the
 product's `PRODUCT` lines. YouTube refuses a title over 100 characters, `<` or `>`, a description
@@ -286,6 +343,19 @@ over 5,000 bytes and tags over 500 characters, and shows no chapters that break 
 is checked first, and a lesson that breaks one stops the command before anything is written. So
 does a tag holding a space: each of the product's tags is one word (`aimarketplace`, not
 `ai marketplace`).
+
+A pages file may name `SHORTS` as well: vertical videos for YouTube Shorts, each a lesson of its own
+on a phone's screen with a page of its own, from a lesson of the path.
+
+```python
+from pageant.youtube import Short
+
+SHORTS = (Short(page=FIRST_NOTE_SHORT, lesson=FIRST_NOTE),)
+```
+
+Each recorded Short gets a `youtube.txt` too: its title, its summary, a link to the whole lesson's
+page, what is scripted, the product's lines and tags, and its Related video, the lesson it is from,
+which a Short's player links to (a link in a Short's description is not one a viewer can follow).
 
 ## What is real, and what is scripted
 
@@ -302,7 +372,7 @@ scripted: its page is the one it films, and its command really runs.
 | `pageant record LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | records the lesson the file names as `LESSON` into `out/` beside it; `--chromium` (or `PAGEANT_CHROMIUM`) drives a Chromium headless shell already installed (`chrome-headless-shell`) rather than Playwright's, and `--keep-work` keeps the frames, the audio and the app's work folder |
 | `pageant rehearse LESSON.py [--out DIR] [--chromium PATH] [--keep-work]` | runs the lesson through as `record` would, with nothing spoken or filmed and its long waits cut short, and stops where `record` would, keeping the page as `failure.png` in its folder in `out/`; `--keep-work` keeps the app's work folder |
 | `pageant pack PAGES.py [--out DIR] [--zip FILE]` | zips the recorded lessons of `PATH`, as `out/lessons.zip` unless `--zip` names another |
-| `pageant youtube-text PAGES.py [--out DIR] [--link SLUG=URL ...]` | writes each recorded lesson's `youtube.txt` from `PATH` and `PRODUCT` |
+| `pageant youtube-text PAGES.py [--out DIR] [--link SLUG=URL ...]` | writes each recorded lesson's `youtube.txt` from `PATH` and `PRODUCT`, and each Short's that `SHORTS` names |
 | `pageant example FOLDER` | writes the example lesson into a new folder, to record and change |
 
 To hear how the voice says a line, and see the phonemes it reads, before a lesson says it:

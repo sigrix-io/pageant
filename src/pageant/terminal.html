@@ -7,6 +7,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terminal</title>
   <style>
     :root { color-scheme: dark; }
@@ -45,6 +46,14 @@
       animation: blink 1.1s steps(1) infinite;
     }
     @keyframes blink { 50% { opacity: 0; } }
+    /* A phone's screen, held upright: a smaller face, and the newest line kept above where its
+       captions are drawn, higher up than a computer's. */
+    @media (orientation: portrait) {
+      body { font-size: 14px; }
+      .bar { height: 34px; padding: 0 12px; }
+      .title { margin-right: 46px; }
+      #screen { padding: 14px 14px 260px; }
+    }
   </style>
 </head>
 <body>

@@ -14,16 +14,51 @@
 // Built with the CSSOM only (element.style), never a <style> element or a style="" attribute, so
 // an app's own CSP (style-src 'self') stays on and the page renders as a person sees it. The title
 // card's mark is an address on the page's own origin (Lesson.mark), which that CSP allows too.
+//
+// A screen held upright, a phone's (camera.PHONE), is laid out for a phone: what is drawn is sized
+// for it, the caption sits above the foot of the screen that a vertical video's player covers with
+// its own titles, and the pointer is a fingertip rather than an arrow.
 (() => {
   if (window.__demo) return;
   const ui = {};
   // What is on screen: what each call below changes, and what is drawn from.
   const shown = { label: null, corner: "top-right", caption: null, card: null, pointer: true, at: null };
   let target = null, pad = 8, drawnHere = false, movedHere = false;
+  const UPRIGHT = innerHeight > innerWidth;
+  const FONT = "Inter, system-ui, sans-serif";
+  // How each part is laid out on a computer's screen, and on a phone's.
+  const LOOK = UPRIGHT ? {
+    edge: "12px",
+    cap: { bottom: "140px", maxWidth: "calc(100vw - 72px)", padding: "10px 16px", borderRadius: "12px",
+      font: "600 20px/1.3 " + FONT, textWrap: "balance" },
+    chip: { top: "12px", padding: "5px 11px", font: "600 12px/1.2 " + FONT },
+    card: { gap: "10px", padding: "0 24px", background: "radial-gradient(520px 900px at 50% 40%, #232842, #0e1018)" },
+    logo: { width: "60px", height: "65px", marginBottom: "6px" },
+    kicker: { font: "600 12px/1.25 " + FONT },
+    title: { font: "700 30px/1.15 " + FONT, maxWidth: "100%" },
+    sub: { font: "400 16px/1.45 " + FONT, maxWidth: "100%" },
+    points: { gap: "12px", margin: "14px 0 0", font: "500 17px/1.3 " + FONT, maxWidth: "100%" },
+    point: { gap: "12px" },
+    mark: { width: "28px", height: "28px", font: "700 14px/28px " + FONT },
+  } : {
+    edge: "18px",
+    cap: { bottom: "30px", maxWidth: "1040px", padding: "14px 26px", borderRadius: "14px", font: "500 23px/1.38 " + FONT },
+    chip: { top: "12px", padding: "7px 15px", font: "600 15px/1.2 " + FONT },
+    card: { gap: "14px", background: "radial-gradient(1200px 600px at 50% 40%, #232842, #0e1018)" },
+    logo: { width: "84px", height: "91px", marginBottom: "10px" },
+    kicker: { font: "600 18px/1.2 " + FONT },
+    title: { font: "700 54px/1.1 " + FONT, maxWidth: "1000px" },
+    sub: { font: "400 24px/1.45 " + FONT, maxWidth: "900px" },
+    points: { gap: "16px", margin: "18px 0 0", font: "500 29px/1.3 " + FONT, maxWidth: "900px" },
+    point: { gap: "18px" },
+    mark: { width: "40px", height: "40px", font: "700 19px/40px " + FONT },
+  };
+  // Where the pointer's point is in what is drawn for it: an arrow's tip, or a fingertip's middle.
+  const HOT = UPRIGHT ? [17, 17] : [4, 2];
   // Where the chapter label may sit: a top corner, clear of the captions at the foot of the screen.
   const CORNERS = {
-    "top-right": { right: "18px", left: "auto" },
-    "top-left": { left: "18px", right: "auto" },
+    "top-right": { right: LOOK.edge, left: "auto" },
+    "top-left": { left: LOOK.edge, right: "auto" },
   };
   const css = (el, style) => (Object.assign(el.style, style), el);
   const make = (tag, style) => css(document.createElement(tag), style || {});
@@ -58,10 +93,10 @@
       points.forEach((text, index) => {
         let row = ui.points.children[index];
         if (!row) {
-          row = make("li", { display: "flex", alignItems: "center", gap: "18px" });
+          row = make("li", { display: "flex", alignItems: "center", ...LOOK.point });
           row.append(
-            make("span", { flex: "none", width: "40px", height: "40px", borderRadius: "50%", background: "#f7c55f",
-              color: "#14161f", font: "700 19px/40px Inter, system-ui, sans-serif", textAlign: "center" }),
+            make("span", { flex: "none", borderRadius: "50%", background: "#f7c55f", color: "#14161f",
+              textAlign: "center", ...LOOK.mark }),
             make("span", {}));
           ui.points.append(row);
           if (!still) {
@@ -77,7 +112,9 @@
     pointer() {
       css(ui.cursor, { display: shown.pointer ? "" : "none", opacity: shown.card ? "0" : "1",
         visibility: shown.at ? "visible" : "hidden" });
-      if (shown.at) ui.cursor.style.transform = "translate(" + (shown.at[0] - 4) + "px," + (shown.at[1] - 2) + "px)";
+      if (shown.at) {
+        ui.cursor.style.transform = "translate(" + (shown.at[0] - HOT[0]) + "px," + (shown.at[1] - HOT[1]) + "px)";
+      }
     },
   };
   // Set while a change is drawn at once, so a card's new points come up with no fade either.
@@ -105,39 +142,41 @@
       opacity: "0", transition: "left .45s ease, top .45s ease, width .45s ease, height .45s ease, opacity .35s ease" });
     ui.ripple = make("div", { position: "fixed", left: "0", top: "0", width: "40px", height: "40px", marginLeft: "-20px",
       marginTop: "-20px", borderRadius: "50%", border: "3px solid #f5a524", opacity: "0" });
-    ui.cap = make("div", { position: "fixed", left: "50%", bottom: "30px", transform: "translate(-50%, 14px)",
-      maxWidth: "1040px", width: "max-content", padding: "14px 26px", borderRadius: "14px", background: "rgba(16,18,27,0.93)",
-      color: "#fff", font: "500 23px/1.38 Inter, system-ui, sans-serif", textAlign: "center",
-      boxShadow: "0 12px 32px rgba(0,0,0,.35)", opacity: "0", transition: "opacity .35s ease, transform .35s ease" });
-    ui.chip = make("div", { position: "fixed", right: "18px", top: "12px", padding: "7px 15px", borderRadius: "999px",
-      background: "rgba(16,18,27,0.88)", color: "#f7c55f", font: "600 15px/1.2 Inter, system-ui, sans-serif",
-      opacity: "0", transition: "opacity .35s ease" });
+    ui.cap = make("div", { position: "fixed", left: "50%", transform: "translate(-50%, 14px)", width: "max-content",
+      background: "rgba(16,18,27,0.93)", color: "#fff", textAlign: "center", boxShadow: "0 12px 32px rgba(0,0,0,.35)",
+      opacity: "0", transition: "opacity .35s ease, transform .35s ease", ...LOOK.cap });
+    ui.chip = make("div", { position: "fixed", right: LOOK.edge, borderRadius: "999px", background: "rgba(16,18,27,0.88)",
+      color: "#f7c55f", opacity: "0", transition: "opacity .35s ease", ...LOOK.chip });
     const NS = "http://www.w3.org/2000/svg";
-    ui.cursor = document.createElementNS(NS, "svg");
-    ui.cursor.setAttribute("width", "30");
-    ui.cursor.setAttribute("height", "30");
-    ui.cursor.setAttribute("viewBox", "0 0 28 28");
+    const svg = (tag, attributes) => {
+      const el = document.createElementNS(NS, tag);
+      for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, value);
+      return el;
+    };
+    if (UPRIGHT) {
+      // A fingertip: a disc a touch would cover, ringed in white so it shows on a light page and a dark one.
+      ui.cursor = svg("svg", { width: "34", height: "34", viewBox: "0 0 34 34" });
+      ui.tip = svg("circle", { cx: "17", cy: "17", r: "14", fill: "rgba(20,22,31,0.32)", stroke: "#ffffff",
+        "stroke-width": "2.5" });
+      css(ui.tip, { transformBox: "fill-box", transformOrigin: "center" });
+      ui.cursor.append(ui.tip);
+    } else {
+      ui.cursor = svg("svg", { width: "30", height: "30", viewBox: "0 0 28 28" });
+      ui.cursor.append(svg("path", { d: "M4 2 L4 22 L9.5 17 L13 25 L16.5 23.5 L13 15.7 L20.5 15.7 Z", fill: "#14161f",
+        stroke: "#ffffff", "stroke-width": "1.6", "stroke-linejoin": "round" }));
+    }
     css(ui.cursor, { position: "fixed", left: "0", top: "0", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.45))" });
-    const arrow = document.createElementNS(NS, "path");
-    arrow.setAttribute("d", "M4 2 L4 22 L9.5 17 L13 25 L16.5 23.5 L13 15.7 L20.5 15.7 Z");
-    arrow.setAttribute("fill", "#14161f");
-    arrow.setAttribute("stroke", "#ffffff");
-    arrow.setAttribute("stroke-width", "1.6");
-    arrow.setAttribute("stroke-linejoin", "round");
-    ui.cursor.append(arrow);
     ui.card = make("div", { position: "fixed", inset: "0", display: "flex", flexDirection: "column", alignItems: "center",
-      justifyContent: "center", gap: "14px", background: "radial-gradient(1200px 600px at 50% 40%, #232842, #0e1018)",
-      color: "#fff", opacity: "0", transition: "opacity .5s ease", textAlign: "center" });
-    ui.logo = make("img", { width: "84px", height: "91px", marginBottom: "10px" });
+      justifyContent: "center", color: "#fff", opacity: "0", transition: "opacity .5s ease", textAlign: "center",
+      ...LOOK.card });
+    ui.logo = make("img", LOOK.logo);
     ui.logo.alt = "";
     ui.logo.style.display = "none";
-    ui.kicker = make("div", { font: "600 18px/1.2 Inter, system-ui, sans-serif", letterSpacing: ".14em",
-      textTransform: "uppercase", color: "#f7c55f" });
-    ui.title = make("div", { font: "700 54px/1.1 Inter, system-ui, sans-serif", letterSpacing: "-0.02em", maxWidth: "1000px" });
-    ui.sub = make("div", { font: "400 24px/1.45 Inter, system-ui, sans-serif", color: "#c9cee0", maxWidth: "900px" });
-    ui.points = make("ol", { display: "none", flexDirection: "column", gap: "16px", listStyle: "none", margin: "18px 0 0",
-      padding: "0", textAlign: "left", font: "500 29px/1.3 Inter, system-ui, sans-serif", color: "#eef0f8",
-      maxWidth: "900px" });
+    ui.kicker = make("div", { letterSpacing: ".14em", textTransform: "uppercase", color: "#f7c55f", ...LOOK.kicker });
+    ui.title = make("div", { letterSpacing: "-0.02em", ...LOOK.title });
+    ui.sub = make("div", { color: "#c9cee0", ...LOOK.sub });
+    ui.points = make("ol", { display: "none", flexDirection: "column", listStyle: "none", padding: "0",
+      textAlign: "left", color: "#eef0f8", ...LOOK.points });
     ui.card.append(ui.logo, ui.kicker, ui.title, ui.sub, ui.points);
     // Drawn before it is on the page, so what the page already had shows at once, with no fade.
     draw.label();
@@ -174,6 +213,11 @@
     css(ui.ripple, { left: e.clientX + "px", top: e.clientY + "px" });
     ui.ripple.animate([{ opacity: 0.95, transform: "scale(.35)" }, { opacity: 0, transform: "scale(1.5)" }],
       { duration: 520, easing: "ease-out" });
+    // A fingertip presses in, as a touch does.
+    if (ui.tip) {
+      ui.tip.animate([{ transform: "scale(1)" }, { transform: "scale(.72)", offset: 0.35 }, { transform: "scale(1)" }],
+        { duration: 380, easing: "ease-out" });
+    }
   }, true);
   // A page an app opens with a view transition (CSS @view-transition) takes no clicks until the
   // transition is over: until then the page hit-tests as <html>. The studio waits for it, and skips

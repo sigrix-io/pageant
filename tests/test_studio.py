@@ -14,11 +14,12 @@ and a paste to one input; and the film (``film.py``): the page's time moving a f
 a page on another site as well, which Chromium starts a renderer for with its own clock, the
 pointer drawn along its path a point a frame, the camera framing a spotlight and coming back out, a
 still screen held in one file, a zoomed frame taken whole, and a click while zoomed that goes to
-another page not stopping it.
+another page not stopping it; and a phone's screen, filmed upright with the overlay laid out for it.
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
-they are skipped, unless ``PAGEANT_STUDIO_TESTS=required``, as CI's studio job sets it.
+they are skipped, unless ``PAGEANT_STUDIO_TESTS=required``, as CI's studio job sets it. The
+thumbnail's test takes ffmpeg on the ``PATH`` too, which encodes it as a recording does.
 """
 
 from __future__ import annotations
@@ -126,6 +127,17 @@ BAR = """<!doctype html>
 </body></html>
 """
 
+#: A page for a phone's screen: a line far down it, to put where a test wants it.
+PHONE = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On a phone</title></head>
+<body style="margin:0;font:16px/1.4 sans-serif">
+  <div style="height:1500px"></div>
+  <p id="line" style="margin:0 24px;height:40px">A line far down the page</p>
+  <div style="height:1500px"></div>
+</body></html>
+"""
+
 #: Two buttons, one under the other, and a banner that comes in above them when the page is told to:
 #: what the press lands on shows whether a click went where its button was by then.
 SHIFTING = """<!doctype html>
@@ -170,6 +182,7 @@ def _transitioning(name: str, seconds: float, body: str) -> str:
 PAGES = {
     "/": HOME,
     "/bar": BAR,
+    "/phone": PHONE,
     "/shifting": SHIFTING,
     "/hanging": HANGING,
     **{
@@ -312,6 +325,102 @@ def _first_frame(tmp_path: Path, chromium: str | None) -> dict[str, Any]:
 
     _rehearse(tmp_path, run, chromium)
     return seen
+
+
+def test_the_youtube_cut_draws_no_caption_into_the_picture_and_logs_each_one(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    """``record(youtube=True)`` films the lesson for YouTube, which shows its ``captions.vtt`` itself."""
+
+    seen: dict[str, Any] = {}
+    staged = Lesson(
+        page=PAGE,
+        title={"kicker": "", "title": "", "sub": ""},
+        narration={},
+        run=lambda s: asyncio.sleep(0),
+        app=_Site(),
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+
+    async def go() -> None:
+        async with studio._staged(staged, tmp_path, work, chromium, {}, captions_drawn=False) as s:
+            await s.card(None)
+            await s.chapter("1 · Sell")
+            await s.say("A line YouTube shows itself.", 0)
+            await s.page.wait_for_function(STILL)
+            seen.update(await s.page.evaluate(READ))
+            seen["logged"] = [caption.text for caption in s.captions]
+
+    asyncio.run(go())
+
+    assert seen["caption"] is None, "no caption is drawn into the picture"
+    assert seen["label"] == "1 · Sell", "what else is on screen still is"
+    assert seen["logged"] == ["A line YouTube shows itself."], "the captions file still has the line"
+
+
+def _thumbnailed(tmp_path: Path, chromium: str | None, *, captions_drawn: bool) -> dict[str, Any]:
+    """A lesson that chooses its thumbnail's frame with a caption up, filmed as one cut or the other."""
+
+    seen: dict[str, Any] = {}
+    staged = Lesson(
+        page=PAGE,
+        title={"kicker": "Notebook · lesson 1", "title": "Your first note", "sub": ""},
+        narration={},
+        run=lambda s: asyncio.sleep(0),
+        app=_Site(),
+        thumbnail={"title": "Find *a note* fast", "brand": "Notebook"},
+    )
+    frames, work = tmp_path / "frames", tmp_path / "work"
+    frames.mkdir()
+    work.mkdir()
+
+    async def go() -> None:
+        async with studio._staged(
+            staged, tmp_path, work, chromium, {}, frames=frames, captions_drawn=captions_drawn
+        ) as s:
+            await s.card(None)
+            s.film.roll()
+            s.started = s.film.clock()
+            await s.say("The line on screen as the frame is chosen.", 0)
+            await s.page.wait_for_function(STILL)
+            await s.thumbnail()
+            s.film.rolling = False
+            seen["chosen"] = (work / studio.THUMBNAIL_SHOT).is_file()
+            if seen["chosen"]:
+                await studio._thumbnail(s, tmp_path)
+                seen["title"] = await s.page.locator(".title").inner_html()
+                seen["kicker"] = await s.page.locator(".kicker").text_content()
+                seen["brand"] = await s.page.locator(".brand").text_content()
+                seen["picture"] = await s.page.evaluate("() => document.querySelector('.shot').naturalWidth")
+                seen["overlay"] = await s.page.evaluate(READ)
+
+    asyncio.run(go())
+    return seen
+
+
+def test_the_youtube_cut_composes_its_thumbnail_from_its_words_and_the_frame_it_chose(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen = _thumbnailed(tmp_path, chromium, captions_drawn=False)
+
+    assert seen["chosen"], "the frame on screen was kept"
+    assert seen["title"] == "Find <em>a note</em> fast", "a starred part is drawn in the accent colour"
+    assert (seen["kicker"], seen["brand"]) == ("Notebook · lesson 1", "Notebook"), "the title card's kicker by default"
+    assert seen["picture"] == 1920, "the chosen frame, as the film kept it"
+    # Nothing of the lesson's screen is drawn over it: no card, no caption, no pointer.
+    assert (seen["overlay"]["card"], seen["overlay"]["caption"], seen["overlay"]["pointer"]) == (None, None, None)
+    made = (tmp_path / bundle.THUMBNAIL).read_bytes()
+    assert _jpeg_size(made) == (1920, 1080)
+    assert len(made) < 2_000_000, "YouTube takes a thumbnail of 2 MB at most"
+
+
+def test_the_lessons_own_recording_chooses_no_thumbnail_frame(tmp_path: Path, chromium: str | None) -> None:
+    # Its frames have the captions in the picture; the thumbnail is the YouTube cut's.
+    seen = _thumbnailed(tmp_path, chromium, captions_drawn=True)
+
+    assert seen["chosen"] is False
+    assert not (tmp_path / bundle.THUMBNAIL).exists()
 
 
 def test_the_page_a_link_goes_to_has_the_label_the_caption_and_the_pointer_in_its_first_frame(
@@ -1137,3 +1246,152 @@ def test_a_rehearsal_that_stops_on_a_still_page_keeps_that_page_too(tmp_path: Pa
         _rehearse(tmp_path, run, chromium)
 
     assert _png_size((tmp_path / FOLDER / "failure.png").read_bytes()) == (1920, 1080)
+
+
+#: Where the caption is on the screen, read from the page.
+CAPTION_BOX = """() => {
+  const root = [...document.documentElement.children].find((el) => el.style.zIndex === "2147483000");
+  const r = root.children[2].children[0].getBoundingClientRect();
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}"""
+
+
+def test_a_phones_screen_is_filmed_upright_with_the_overlay_laid_out_for_it(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    middle = "() => { const r = document.querySelector('#line').getBoundingClientRect(); return r.top + r.height / 2; }"
+
+    async def run(s: Studio) -> None:
+        seen["screen"] = await s.page.evaluate("[innerWidth, innerHeight, devicePixelRatio]")
+        seen["mouse"] = s.mouse
+        home = s.page.url
+        await s.card(None)
+        await s.page.goto(home + "phone")
+        await s.arrive("**/phone")
+        await s.say("A caption long enough to take two lines on a phone's screen.", 0)
+        await s.page.wait_for_function(STILL)
+        seen["caption"] = await s.page.evaluate(CAPTION_BOX)
+        line = s.page.locator("#line")
+        # Its foot above the phone's captions, then in the band they cover, which on a computer's
+        # screen is clear of them: the page is scrolled for the second only.
+        for where, top in (("above the captions", 330), ("over the captions", 430)):
+            await line.evaluate(f"el => window.scrollTo(0, el.offsetTop - {top})")
+            await s.glide(line)
+            seen[where] = await s.page.evaluate(middle)
+        seen["pointer"] = (await s.page.evaluate(READ))["pointer"]
+        seen["at"] = s.mouse
+        with pytest.raises(ValueError, match="zooms on the landscape screen only"):
+            await s.spot(line, zoom=2.0)
+
+    shots = _filmed(tmp_path, run, chromium, screen=camera.PHONE)
+
+    assert seen["screen"] == [360, 640, 3]
+    assert seen["mouse"] == (180, 320), "the pointer starts in the middle of the phone's screen"
+    assert {_jpeg_size(shot.file.read_bytes()) for shot in shots} == {(1080, 1920)}
+    caption = seen["caption"]
+    assert caption["bottom"] == pytest.approx(640 - 140, abs=1), "above the foot a vertical video's player covers"
+    assert caption["top"] >= 640 - camera.PHONE.band, "in the band a step keeps what it points at above"
+    assert 0 < caption["left"] < caption["right"] < 360
+    assert seen["above the captions"] == pytest.approx(330 + 20, abs=1), "in view: not scrolled to"
+    assert seen["over the captions"] == pytest.approx(320, abs=4), "scrolled to the middle"
+    x, y = (float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", seen["pointer"]))
+    assert (x + 17, y + 17) == pytest.approx(seen["at"], abs=1), "a fingertip, drawn round its point"
+
+
+def test_a_phones_screen_takes_no_zoom_no_thumbnail_and_no_youtube_cut(tmp_path: Path) -> None:
+    async def run(s: Studio) -> None:
+        return None
+
+    lesson: dict[str, Any] = {"page": PAGE, "title": {"title": ""}, "narration": {}, "run": run, "app": _Site()}
+
+    with pytest.raises(ValueError, match="zooms on the landscape screen only"):
+        Lesson(**lesson, screen=camera.PHONE, zoom=2.0)
+    with pytest.raises(ValueError, match="thumbnail is composed for a lesson on the landscape screen only"):
+        Lesson(**lesson, screen=camera.PHONE, thumbnail={"title": "Your first note"})
+    phone = Lesson(**lesson, screen=camera.PHONE)
+    with pytest.raises(ValueError, match="keeps its captions in the picture"):
+        asyncio.run(studio.record(phone, tmp_path, youtube=True))
+    assert not list(tmp_path.iterdir()), "refused before anything is written"
+    assert Lesson(**lesson, zoom=2.0, thumbnail={"title": "Your first note"}).screen == camera.LANDSCAPE
+
+
+def test_a_cut_leaves_out_of_the_video_what_its_steps_take_while_the_page_runs_on(
+    tmp_path: Path, chromium: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def run(s: Studio) -> None:
+        await s.card(None)
+        await s.sleep(500)
+        seen["page before"] = await s.page.evaluate("performance.now()")
+        before = s.clock()
+        async with s.cut():
+            await s.sleep(3000)
+        seen["through the cut"] = s.clock() - before
+        seen["page after"] = await s.page.evaluate("performance.now()")
+        await s.sleep(500)
+        seen["clock"] = s.clock()
+
+    shots = _filmed(tmp_path, run, chromium)
+
+    video = sum(shot.frames for shot in shots) / studio.FPS
+    assert seen["through the cut"] == pytest.approx(0, abs=0.05), "the video's clock stands still through it"
+    assert seen["page after"] - seen["page before"] == pytest.approx(3000, abs=50), "the page's time ran on through it"
+    assert video == pytest.approx(seen["clock"], abs=0.05), "the video is as long as its clock says"
+    assert video < 2.0
+
+
+class _LosingCDP:
+    """A page whose time moves on but whose answers are lost, as when it goes to another page mid-frame:
+    the answer to the first ``lost`` asks for the page's time to move on never comes."""
+
+    def __init__(self, lost: int) -> None:
+        self.lost = lost
+        self.policies: list[str] = []
+        self.waiting: list[Callable[[Any], None]] = []
+
+    def once(self, event: str, handler: Callable[[Any], None]) -> None:
+        self.waiting.append(handler)
+
+    async def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "HeadlessExperimental.beginFrame":
+            await asyncio.Event().wait()
+        assert params is not None
+        self.policies.append(params["policy"])
+        if len(self.policies) > self.lost:
+            asyncio.get_running_loop().call_soon(lambda: [handler(None) for handler in self.waiting])
+        return {"virtualTimeTicksBase": 1000.0}
+
+
+@pytest.mark.parametrize(
+    ("stuck", "lost", "policies"),
+    [
+        (False, 2, ["pauseIfNetworkFetchesPending", "advance", "advance"]),
+        (False, 99, ["pauseIfNetworkFetchesPending"] + ["advance"] * (1 + film.ASKS)),
+        (True, 1, ["advance", "advance"]),
+        (True, 99, ["advance"] * (1 + film.ASKS)),
+    ],
+    ids=["answered late", "never answered", "stuck, answered late", "stuck, never answered"],
+)
+def test_a_frame_whose_answer_is_lost_asks_again_and_never_waits_for_ever(
+    monkeypatch: pytest.MonkeyPatch, stuck: bool, lost: int, policies: list[str]
+) -> None:
+    monkeypatch.setattr(film, "STUCK", 0.05)
+    cdp = _LosingCDP(lost)
+    painting = film.Film(cdp)  # type: ignore[arg-type]
+    if stuck:
+        # A request open longer than STUCK: a stream, which the page's time runs on past.
+        painting._open["stream"] = time.monotonic() - 10
+
+    asyncio.run(asyncio.wait_for(painting._advance(), 5))
+
+    assert cdp.policies == policies
+
+
+def test_a_frame_chromium_never_paints_stops_the_film_with_that_said(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(film, "PAINT_SECONDS", 0.05)
+    painting = film.Film(_LosingCDP(0))  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="Chromium painted no frame in 0.05 s of asking"):
+        asyncio.run(asyncio.wait_for(painting._begin({"interval": 1000 / 60}), 5))

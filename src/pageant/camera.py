@@ -1,8 +1,10 @@
 """Where a frame looks, and how the pointer gets somewhere: the camera and the pointer's paths.
 
-A lesson films a screen of ``WIDTH`` x ``HEIGHT`` CSS pixels. The camera shows a rectangle of it,
-a ``View``, scaled up to fill the frame, so the text a step is about is large enough to read on a
-phone; the whole screen is the view at scale 1. A view frames what a lesson points at
+A lesson films a ``Screen``: a computer's, ``LANDSCAPE``, ``WIDTH`` x ``HEIGHT`` CSS pixels, unless it
+says otherwise, or a phone's held upright, ``PHONE``, for a vertical video. On the landscape screen
+the camera shows a rectangle of it, a ``View``, scaled up to fill the frame, so the text a step is
+about is large enough to read on a phone; the whole screen is the view at scale 1. A phone's screen
+is filmed whole: its page is laid out for a phone already. A view frames what a lesson points at
 (``framing``): the element, as large as it fits above the captions at the foot of the screen, up to
 the lesson's largest zoom, and never past the screen's edges. Between two views the camera eases
 (``between``), and the pointer moves along a gently curved path that speeds up and slows down as a
@@ -16,8 +18,46 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-#: The screen a lesson films, in CSS pixels.
-WIDTH, HEIGHT = 1280, 720
+
+@dataclass(frozen=True)
+class Screen:
+    """The screen a lesson films: its size in CSS pixels, the device scale Chromium paints it at, and
+    the foot of it its captions cover.
+
+    The frame is the screen at its scale, in device pixels. The page sees a window of the screen's
+    size, so it lays itself out for it as it would for a person's: a phone's screen gets the page a
+    phone gets.
+    """
+
+    width: int
+    height: int
+    scale: float
+    #: The foot of the screen, in CSS pixels, that a caption of two or three lines covers: an element
+    #: a step points at is above it, or the page is scrolled to put it there.
+    band: int
+
+    @property
+    def frame(self) -> tuple[int, int]:
+        """A frame's size in device pixels: the screen at its scale."""
+
+        return round(self.width * self.scale), round(self.height * self.scale)
+
+    @property
+    def upright(self) -> bool:
+        """Whether the screen is taller than it is wide, as a phone is held: a vertical video's."""
+
+        return self.height > self.width
+
+
+#: A computer's screen, 1280x720 CSS pixels painted at 1.5, so frames are 1920x1080: what a learning
+#: site and YouTube play. Its captions are at its foot (``overlay.js``).
+LANDSCAPE = Screen(1280, 720, 1.5, 125)
+#: A phone's, held upright: 360x640 CSS pixels painted at 3, so frames are 1080x1920, the vertical
+#: video YouTube Shorts and the like play. Its captions sit above the foot of the screen that those
+#: players cover with their own titles (``overlay.js``).
+PHONE = Screen(360, 640, 3.0, 250)
+#: The landscape screen, in CSS pixels: the screen the camera moves on.
+WIDTH, HEIGHT = LANDSCAPE.width, LANDSCAPE.height
 #: How much of the room above the captions a framed element fills, at most.
 FILL = 0.72
 #: A zoom smaller than this is not worth the camera's move: the view stays where it is.
@@ -174,13 +214,16 @@ __all__ = [
     "BOW",
     "FILL",
     "HEIGHT",
+    "LANDSCAPE",
     "LEAST_ZOOM",
     "MOST_BOW",
     "MOVE_SECONDS",
+    "PHONE",
     "QUICKEST",
     "SLOWEST",
     "WHOLE",
     "WIDTH",
+    "Screen",
     "View",
     "between",
     "ease",

@@ -8,6 +8,36 @@ described in `VERSIONING.md`.
 
 ### Added
 
+- A lesson's YouTube cut: `pageant record LESSON --youtube` records the same lesson with no captions
+  drawn into the picture, into `out/youtube/<folder>/` (`bundle.YOUTUBE_CUT`), for YouTube to show
+  the `captions.vtt` written beside it, which a viewer can turn off or have translated. The lesson's
+  own recording keeps its captions in the picture for a learning site, and the pack takes it.
+  `pageant youtube-text` writes each lesson's upload from its YouTube cut where one was recorded,
+  as its chapters are timed to that video.
+- A YouTube thumbnail: the YouTube cut composes `thumbnail.jpg` (1920×1080, under YouTube's 2 MB)
+  from the lesson's `thumbnail` words (a short title, a `*starred*` part in the accent colour, an
+  optional kicker and brand) beside its mark, and the frame it chose with `Studio.thumbnail()`, which
+  is zoomed where the camera was. It is drawn on a page of Pageant's own once the film stops rolling,
+  in Inter where the fonts answer.
+- A phone's screen (`Lesson.screen`, `camera.PHONE`): a lesson filmed on a 360×640 screen painted at 3,
+  for a vertical video of 1080×1920, its page laid out for the phone and the overlay too, with the
+  caption above the foot a vertical video's player covers, and a fingertip for the pointer. The
+  camera stays still on it, so it takes no `zoom` and no thumbnail, and it keeps its captions in the
+  picture rather than having a YouTube cut. The report holds a vertical video to a Short's rules: three
+  minutes at most, no end screen and no chapters, and three seconds after its last line at most.
+- `Studio.cut()`: what the steps inside take is left out of the video, as an edit cuts a wait (a payment
+  processing, a slow page). The page's time runs on; the film's clock, which is the video's, does not,
+  so captions, voice and clicks stay where they were.
+- YouTube Shorts' uploads (`youtube.Short`): a pages file's `SHORTS`, each a lesson of its own on a
+  phone's screen, from a lesson of the path, whose `youtube.txt` links to that lesson's page and names
+  it as its Related video.
+- A recording's report (`pageant.report`): `report.md` and `report.json` beside the video, and what
+  they found worth a look in what `pageant record` prints. It holds the checks made by hand before
+  publishing, read off the recording's own log: the loudness and true peak against the lesson's
+  target, a caption up long after its voice, the longest stretch with nothing said and the longest
+  with no frame changing (title and end cards aside), the distinct frames of the busiest second of
+  motion, the seconds after the last line that YouTube's end screen takes, and the chapters YouTube
+  makes. A finding never stops a recording.
 - A card's `points`: a short list under its title, numbered, or ticked for a recap (`"checks": True`),
   and `Studio.tell`, which brings them up one at a time as a line read over the card names them, so a
   lesson can open on what it covers and close on what it showed. A point added to a card on screen
@@ -71,6 +101,14 @@ described in `VERSIONING.md`.
 
 ### Fixed
 
+- A frame whose answer is lost no longer holds the film for ever. A page that went to another while its
+  time moved on a frame could take with it the renderer that would have said so, and the film waited,
+  idle, until the recording was killed. It asks again every `STUCK` seconds, and paints the frame
+  after `ASKS` asks; and a frame Chromium does not paint in `PAINT_SECONDS` (60) stops the recording
+  with that said.
+- The screen a lesson is filmed on is set on its page (`Emulation.setDeviceMetricsOverride`, keeping the
+  browser's own scale). Chromium's headless shell opens every page at 1280×720 whatever `--window-size`
+  says, which the studio passed it and which only ever matched by chance.
 - A page on another site than the one before it (a payment provider's checkout, and the app it sends
   the buyer back to) held its CSS animations at their first keyframe: a menu that fades in was open,
   and took clicks, but never showed, and a title card never came up. Chromium draws such a page with a

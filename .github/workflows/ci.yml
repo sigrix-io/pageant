@@ -59,9 +59,10 @@ jobs:
       - name: The example lesson, as a copy of it is checked
         run: python -m mypy --no-namespace-packages src/pageant/example/pages.py src/pageant/example/lesson.py
 
-  # The tests with the record extra installed and a Chromium to drive, which the test job has
-  # neither of: tests/test_studio.py runs the studio's steps in Chromium (a lesson that goes from
-  # page to page, a click after a long scroll, a rehearsal), and may not be skipped here.
+  # The tests with the record extra installed, a Chromium to drive and ffmpeg, which the test job
+  # has none of: tests/test_studio.py runs the studio's steps in Chromium (a lesson that goes from
+  # page to page, a click after a long scroll, a rehearsal), and composes a YouTube cut's thumbnail,
+  # which ffmpeg encodes as a recording does; it may not be skipped here.
   studio:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -70,6 +71,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg
       - run: python -m pip install -e ".[dev,record]"
       - run: python -m playwright install --with-deps chromium
       - name: Test, the studio's tests with them
@@ -115,9 +118,11 @@ jobs:
         run: |
           set -euo pipefail
           bundle=notebook/out/first-note
-          for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json; do
+          for name in video.mp4 cover.jpg captions.vtt chapters.vtt chapters.txt lesson.json report.json report.md; do
             test -s "$bundle/$name" || { echo "::error::$bundle/$name is missing or empty"; exit 1; }
           done
+          # What the recording's report found worth a look; it never stops the job.
+          cat "$bundle/report.md"
           # Read from ffprobe's JSON: its CSV gains fields of its own from one ffmpeg release to the next.
           stream=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of json "$bundle/video.mp4")
           echo "$stream"
