@@ -18,7 +18,8 @@ another page not stopping it; and a phone's screen, filmed upright with the over
 
 They drive the browser, so they take the record extra and a Chromium: Playwright's own
 (``playwright install chromium``) or the one ``PAGEANT_CHROMIUM`` names. Where either is missing
-they are skipped, unless ``PAGEANT_STUDIO_TESTS=required``, as CI's studio job sets it.
+they are skipped, unless ``PAGEANT_STUDIO_TESTS=required``, as CI's studio job sets it. The
+thumbnail's test takes ffmpeg on the ``PATH`` too, which encodes it as a recording does.
 """
 
 from __future__ import annotations
