@@ -2,16 +2,22 @@
 
     python -m pageant.music 40 bed.wav   # hear forty seconds of it
 
-D major at 80 bpm: Dmaj9, Bm7, Gmaj7 and A(add9), two bars each. A warm pad throughout, a
-soft bass, and a quiet plucked arpeggio between the intro and the outro, with a synthetic
-room over all of it. 48 kHz stereo, peaking at -1 dBFS; mixdown.py ducks it under the voice.
-The same length always gives the same track.
+D major at 80 bpm, in sections of four chords, two bars each. The bed's own progression, Dmaj9,
+Bm7, Gmaj7 and A(add9), opens it and comes back between three others in the key, so a lesson of
+a few minutes does not hear the same 24 seconds come round again and again. A warm pad
+throughout, a soft bass, and a quiet plucked arpeggio between the intro and the outro, which
+takes a new figure each section and now and then rests for one, with a synthetic room over all
+of it. 48 kHz stereo, peaking at -1 dBFS; mixdown.py ducks it under the voice. The same length
+always gives the same track.
 """
 
 from __future__ import annotations
 
+import math
+import random
 import sys
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -19,22 +25,100 @@ import numpy as np
 RATE = 48_000
 BEAT = 60 / 80
 CHORD_SECONDS = 8 * BEAT
+SECTION_SECONDS = 4 * CHORD_SECONDS
 #: Pad voicings, as MIDI notes, kept in one register so each change moves as little as it can.
-CHORDS = [
-    [50, 57, 61, 64, 66],  # Dmaj9: D A C# E F#
-    [47, 54, 57, 62, 66],  # Bm7: B F# A D F#
-    [55, 59, 62, 66, 69],  # Gmaj7: G B D F# A
-    [52, 57, 59, 61, 64],  # A(add9): E A B C# E
+CHORDS = {
+    "Dmaj9": [50, 57, 61, 64, 66],  # D A C# E F#
+    "Bm7": [47, 54, 57, 62, 66],  # B F# A D F#
+    "Gmaj7": [55, 59, 62, 66, 69],  # G B D F# A
+    "A(add9)": [52, 57, 59, 61, 64],  # E A B C# E
+    "F#m7": [54, 57, 61, 64, 69],  # F# A C# E A
+    "Em9": [52, 55, 59, 62, 66],  # E G B D F#
+}
+#: Each chord's root in the bass: D2, B1, G2, A2, F#2 and E2.
+ROOTS = {"Dmaj9": 38, "Bm7": 35, "Gmaj7": 43, "A(add9)": 45, "F#m7": 42, "Em9": 40}
+#: Each chord's arpeggio, an octave or two up: its root, third, fifth, and seventh or octave.
+ARPEGGIOS = {
+    "Dmaj9": [74, 78, 81, 85],
+    "Bm7": [71, 74, 78, 81],
+    "Gmaj7": [67, 71, 74, 78],
+    "A(add9)": [69, 73, 76, 81],
+    "F#m7": [66, 69, 73, 76],
+    "Em9": [64, 67, 71, 74],
+}
+#: What a section can play, the bed's own progression first: the others each lead back to it.
+PROGRESSIONS = [
+    ("Dmaj9", "Bm7", "Gmaj7", "A(add9)"),
+    ("Gmaj7", "A(add9)", "F#m7", "Bm7"),
+    ("Em9", "Gmaj7", "Dmaj9", "A(add9)"),
+    ("Bm7", "Gmaj7", "Em9", "A(add9)"),
 ]
-ROOTS = [38, 35, 43, 45]  # D2, B1, G2, A2
-#: Each chord's arpeggio, an octave or two up, and the eighths of a bar it sounds on.
-ARPEGGIOS = [
-    [74, 78, 81, 85, 81, 78],
-    [71, 74, 78, 81, 78, 74],
-    [67, 71, 74, 78, 74, 71],
-    [69, 73, 76, 81, 76, 73],
-]
-PATTERN = [1, 0, 1, 1, 0, 1, 0, 1]
+#: The eighths of a bar the arpeggio sounds on, the bed's own first.
+PATTERNS = [(1, 0, 1, 1, 0, 1, 0, 1), (1, 0, 0, 1, 0, 0, 1, 0), (1, 0, 1, 0, 1, 0, 1, 0), (1, 0, 0, 0, 1, 0, 1, 0)]
+#: The order the arpeggio takes a chord's notes in, from the lowest; the bed's own, up and back, first.
+SHAPES = [(0, 1, 2, 3, 2, 1), (0, 1, 2, 3), (0, 2, 1, 3), (3, 2, 1, 0)]
+
+
+@dataclass(frozen=True)
+class Section:
+    """Eight bars of the bed: a progression's four chords, and the arpeggio's figure over them.
+
+    ``pattern`` is ``None`` where the arpeggio rests for the section.
+    """
+
+    chords: tuple[str, ...]
+    pattern: tuple[int, ...] | None
+    shape: tuple[int, ...]
+
+
+def plan(seconds: float) -> list[Section]:
+    """The sections a bed of ``seconds`` plays: the same for the same length, and a longer bed
+    begins with a shorter one's sections, so a lesson that grows keeps the music it had.
+
+    The bed's own progression opens with its own figure, and comes back between each of the
+    others, which go round in a shuffled order that does not start with the one that played last.
+    Each section's figure is one its progression did not play its last two times, nor the section
+    before it. After the first two sections, the arpeggio rests for one now and then, with at least
+    two sections between rests.
+    """
+
+    generator = random.Random(7)  # noqa: S311 -- the music's choices, which only need to be the same each time
+
+    def pick(count: int) -> int:
+        # Only random() is held to the same sequence from one Python to the next, so every choice
+        # comes from it, and in the order the sections play.
+        return int(generator.random() * count)
+
+    sections: list[Section] = []
+    order: list[int] = []
+    others: list[int] = []
+    played: dict[int, list[tuple[int, int]]] = {}
+    last: tuple[int, int] | None = None
+    since = 2  # sections since the arpeggio last rested
+    for index in range(max(1, math.ceil(seconds / SECTION_SECONDS))):
+        if index % 2 == 0:
+            progression = 0
+        else:
+            if not others:
+                others = [1, 2, 3]
+                for i in range(len(others) - 1, 0, -1):
+                    j = pick(i + 1)
+                    others[i], others[j] = others[j], others[i]
+                if index > 1 and others[0] == order[-2]:
+                    others.append(others.pop(0))
+            progression = others.pop(0)
+        figure = (0, 0)
+        if index:
+            spent = set(played.get(progression, [])[-2:]) | {last}
+            free = [(p, s) for p in range(len(PATTERNS)) for s in range(len(SHAPES)) if (p, s) not in spent]
+            figure = free[pick(len(free))]
+        rest = index >= 2 and since >= 2 and generator.random() < 0.25
+        pattern, shape = figure
+        sections.append(Section(PROGRESSIONS[progression], None if rest else PATTERNS[pattern], SHAPES[shape]))
+        order.append(progression)
+        played.setdefault(progression, []).append(figure)
+        last, since = figure, 0 if rest else since + 1
+    return sections
 
 
 def hz(note: float) -> float:
@@ -115,19 +199,21 @@ def compose(seconds: float) -> np.ndarray:
     bass = np.zeros_like(pad)
     arpeggio = np.zeros_like(pad)
     intro, outro = 2 * CHORD_SECONDS, seconds - CHORD_SECONDS
-    at, index = 0.0, 0
-    while at < seconds:
-        chord = index % len(CHORDS)
+    chords = [(name, section) for section in plan(seconds) for name in section.chords]
+    for index, (name, section) in enumerate(chords):
+        at = index * CHORD_SECONDS
+        if at >= seconds:
+            break
         length = CHORD_SECONDS + 2.2  # each chord rings on into the next
-        for note in CHORDS[chord]:
+        for note in CHORDS[name]:
             add(pad, pad_note(note, length, rng) * envelope(int(length * RATE), 1.6, 2.4)[:, None], at, 0.16)
         t = np.arange(int(length * RATE)) / RATE
-        low = np.sin(2 * np.pi * hz(ROOTS[chord]) * t) + 0.2 * np.sin(4 * np.pi * hz(ROOTS[chord]) * t)
+        low = np.sin(2 * np.pi * hz(ROOTS[name]) * t) + 0.2 * np.sin(4 * np.pi * hz(ROOTS[name]) * t)
         add(bass, np.stack([low, low], axis=1) * envelope(len(t), 0.9, 2.0)[:, None], at, 0.20)
-        if intro <= at < outro:
-            notes, step = ARPEGGIOS[chord], 0
+        if section.pattern and intro <= at < outro:
+            notes, step = [ARPEGGIOS[name][i] for i in section.shape], 0
             for eighth in range(16):
-                if PATTERN[eighth % 8]:
+                if section.pattern[eighth % 8]:
                     add(
                         arpeggio,
                         pluck(notes[step % len(notes)], 0.3 if step % 2 else 0.7),
@@ -135,8 +221,6 @@ def compose(seconds: float) -> np.ndarray:
                         0.075,
                     )
                     step += 1
-        at += CHORD_SECONDS
-        index += 1
     breath = 1 + 0.08 * np.sin(2 * np.pi * 0.07 * np.arange(len(pad)) / RATE)
     mix = smooth(pad * breath[:, None], 2_600) + smooth(bass, 400) + smooth(arpeggio, 6_000)
     mix = reverb(mix, rng)[:total]

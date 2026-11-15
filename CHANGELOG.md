@@ -160,6 +160,13 @@ described in `VERSIONING.md`.
 
 ### Changed
 
+- The music bed goes in sections of eight bars, 24 seconds each (`music.plan`). The bed's own
+  progression (Dmaj9, Bm7, Gmaj7, A(add9)) opens it and comes back between three others in the
+  key. The arpeggio takes a new figure each section, from four rhythms and four orders through
+  the chord, and rests for a section now and then. The bed was one progression played the same
+  way throughout, so a lesson of five minutes heard it come round a dozen times. Its first section
+  is as it was, so a lesson opens as before; the same length still gives the same track, and a
+  longer bed begins with a shorter one's sections.
 - Recording takes Chromium's headless shell (`chrome-headless-shell`), which `playwright install
   chromium` installs beside Chromium: `--chromium` and `PAGEANT_CHROMIUM` name one. A Chromium
   that cannot paint a frame when asked stops the recording with that said.
